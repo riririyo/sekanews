@@ -709,7 +709,7 @@
             sidebarPanel.classList.remove('left-side', 'right-side');
             sidebarPanel.classList.add(`${side}-side`);
 
-            const safeImg = safeHttpUrl(news.imageUrl, 'https://picsum.photos/800/600');
+            const safeImg = news.imageUrl ? safeHttpUrl(news.imageUrl, '') : '';
             const safeArticleUrl = safeHttpUrl(news.url, '#');
             const disclaimer = news.aiSummaryIsHeadlineOnly
                 ? `<p class="text-[11px] text-purple-400 dark:text-purple-300/80 mt-2">※ 見出しから推測したAI要約です(一般的な背景情報の補足を含む場合があります)。タイトルもAIによる日本語訳です。詳細は元記事でご確認ください。</p>`
@@ -741,6 +741,12 @@
             const xShareUrl = `https://twitter.com/intent/tweet?text=${shareText}&url=${shareUrlEnc}`;
             const lineShareUrl = `https://social-plugins.line.me/lineit/share?url=${shareUrlEnc}&text=${shareText}`;
             const copyArg = safeArticleUrl.replace(/'/g, "\\'");
+            const imageBlockHtml = safeImg
+                ? `<div class="rounded-xl overflow-hidden shadow-md h-48 bg-gray-200">
+                    <img src="${escapeHtml(safeImg)}" alt="${escapeHtml(news.title)}" class="w-full h-full object-cover"
+                         onerror="this.closest('.rounded-xl').style.display='none';">
+                </div>`
+                : '';
 
             sidebarContent.innerHTML = `
                 <div>
@@ -759,10 +765,7 @@
                     ${sourceHtml}
                 </div>
 
-                <div class="rounded-xl overflow-hidden shadow-md h-48 bg-gray-200">
-                    <img src="${escapeHtml(safeImg)}" alt="${escapeHtml(news.title)}" class="w-full h-full object-cover"
-                         onerror="this.onerror=null;this.src='https://picsum.photos/800/600';">
-                </div>
+                ${imageBlockHtml}
 
                 <div class="bg-purple-50 dark:bg-purple-950/40 p-4 rounded-xl border border-purple-100 dark:border-purple-900">
                     <h3 class="text-sm font-bold text-purple-700 dark:text-purple-300 flex items-center gap-1.5 mb-2">
