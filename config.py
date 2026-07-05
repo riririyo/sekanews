@@ -151,6 +151,79 @@ NEWS_COUNTRIES = [
 ]
 
 # ---------------------------------------------------------------------------
+# ②-b ローカルニュース取得 (Google News RSS「地名検索」フィード)
+# ---------------------------------------------------------------------------
+# NEWS_COUNTRIESの「国別トップニュース」は、その国の全国的なニュースしか
+# ほとんど拾えない(例: 日本のトップニュースに札幌のローカルニュースはまず出てこない)。
+# そこでGoogleニュースの検索フィード(rss/search?q=地名)を都市名で叩くことで、
+# 全国紙だけでなく地方メディア(例: 札幌のSTVなど)の記事も横断的に拾えるようにする。
+# 新しいAPIキーは不要(Google News RSSの仕組みをそのまま流用)。
+#
+# 都市はあえて首都・最大都市ではなく、二番手都市や地方都市を中心に選んである
+# (首都圏の話題はNEWS_COUNTRIESの国別トップニュース側で既にカバーされているため、
+# ここで同じ都市を選んでも新しい情報が増えにくい)。
+# パイロットとしてまず各大陸から40都市前後を選定。様子を見て増減させる。
+NEWS_SEARCH_RSS_URL_TEMPLATE = "https://news.google.com/rss/search?q={query}&hl={hl}&gl={gl}&ceid={ceid}"
+
+# 検索フィード1件あたりの読み込み記事数上限(国別トップニュースより少なめでよい)。
+NEWS_MAX_ITEMS_PER_LOCAL_CITY = 20
+
+LOCAL_CITIES = [
+    # --- 日本 ---
+    {"label": "札幌", "query": "札幌", "gl": "JP", "hl": "ja", "ceid": "JP:ja"},
+    {"label": "仙台", "query": "仙台", "gl": "JP", "hl": "ja", "ceid": "JP:ja"},
+    {"label": "福岡", "query": "福岡", "gl": "JP", "hl": "ja", "ceid": "JP:ja"},
+    {"label": "那覇", "query": "那覇 沖縄", "gl": "JP", "hl": "ja", "ceid": "JP:ja"},
+    # --- 東アジア ---
+    {"label": "成都", "query": "成都", "gl": "CN", "hl": "zh-Hans", "ceid": "CN:zh-Hans"},
+    {"label": "西安", "query": "西安", "gl": "CN", "hl": "zh-Hans", "ceid": "CN:zh-Hans"},
+    {"label": "釜山", "query": "부산", "gl": "KR", "hl": "ko", "ceid": "KR:ko"},
+    {"label": "高雄", "query": "高雄", "gl": "TW", "hl": "zh-Hant", "ceid": "TW:zh-Hant"},
+    # --- 東南アジア ---
+    {"label": "スラバヤ", "query": "Surabaya", "gl": "ID", "hl": "id", "ceid": "ID:id"},
+    {"label": "チェンマイ", "query": "Chiang Mai", "gl": "TH", "hl": "th", "ceid": "TH:th"},
+    {"label": "ダナン", "query": "Da Nang", "gl": "VN", "hl": "vi", "ceid": "VN:vi"},
+    {"label": "セブ", "query": "Cebu", "gl": "PH", "hl": "en-PH", "ceid": "PH:en"},
+    # --- 南アジア ---
+    {"label": "ベンガルール", "query": "Bengaluru", "gl": "IN", "hl": "en-IN", "ceid": "IN:en"},
+    {"label": "コルカタ", "query": "Kolkata", "gl": "IN", "hl": "en-IN", "ceid": "IN:en"},
+    # --- 中東 ---
+    {"label": "ジェッダ", "query": "Jeddah", "gl": "SA", "hl": "ar", "ceid": "SA:ar"},
+    {"label": "イズミル", "query": "Izmir", "gl": "TR", "hl": "tr", "ceid": "TR:tr"},
+    # --- アフリカ北部 ---
+    {"label": "アレクサンドリア", "query": "Alexandria Egypt", "gl": "EG", "hl": "ar", "ceid": "EG:ar"},
+    # --- アフリカ南部・東部 ---
+    {"label": "ダーバン", "query": "Durban", "gl": "ZA", "hl": "en-ZA", "ceid": "ZA:en"},
+    {"label": "モンバサ", "query": "Mombasa", "gl": "KE", "hl": "en-KE", "ceid": "KE:en"},
+    {"label": "カノ", "query": "Kano Nigeria", "gl": "NG", "hl": "en-NG", "ceid": "NG:en"},
+    # --- 西欧 ---
+    {"label": "マンチェスター", "query": "Manchester", "gl": "GB", "hl": "en-GB", "ceid": "GB:en"},
+    {"label": "グラスゴー", "query": "Glasgow", "gl": "GB", "hl": "en-GB", "ceid": "GB:en"},
+    {"label": "マルセイユ", "query": "Marseille", "gl": "FR", "hl": "fr", "ceid": "FR:fr"},
+    {"label": "ミュンヘン", "query": "München", "gl": "DE", "hl": "de", "ceid": "DE:de"},
+    {"label": "ミラノ", "query": "Milano", "gl": "IT", "hl": "it", "ceid": "IT:it"},
+    {"label": "バルセロナ", "query": "Barcelona", "gl": "ES", "hl": "es", "ceid": "ES:es"},
+    # --- 東欧・ロシア ---
+    {"label": "ノヴォシビルスク", "query": "Новосибирск", "gl": "RU", "hl": "ru", "ceid": "RU:ru"},
+    # --- 北米 ---
+    {"label": "シカゴ", "query": "Chicago", "gl": "US", "hl": "en-US", "ceid": "US:en"},
+    {"label": "ヒューストン", "query": "Houston", "gl": "US", "hl": "en-US", "ceid": "US:en"},
+    {"label": "シアトル", "query": "Seattle", "gl": "US", "hl": "en-US", "ceid": "US:en"},
+    {"label": "マイアミ", "query": "Miami", "gl": "US", "hl": "en-US", "ceid": "US:en"},
+    {"label": "バンクーバー", "query": "Vancouver", "gl": "CA", "hl": "en-CA", "ceid": "CA:en"},
+    {"label": "モントリオール", "query": "Montreal", "gl": "CA", "hl": "en-CA", "ceid": "CA:en"},
+    {"label": "グアダラハラ", "query": "Guadalajara", "gl": "MX", "hl": "es-419", "ceid": "MX:es-419"},
+    # --- 中南米 ---
+    {"label": "レシフェ", "query": "Recife", "gl": "BR", "hl": "pt-BR", "ceid": "BR:pt-419"},
+    {"label": "ポルトアレグレ", "query": "Porto Alegre", "gl": "BR", "hl": "pt-BR", "ceid": "BR:pt-419"},
+    {"label": "コルドバ", "query": "Córdoba Argentina", "gl": "AR", "hl": "es-419", "ceid": "AR:es-419"},
+    # --- オセアニア ---
+    {"label": "メルボルン", "query": "Melbourne", "gl": "AU", "hl": "en-AU", "ceid": "AU:en"},
+    {"label": "ブリスベン", "query": "Brisbane", "gl": "AU", "hl": "en-AU", "ceid": "AU:en"},
+    {"label": "クライストチャーチ", "query": "Christchurch", "gl": "NZ", "hl": "en-NZ", "ceid": "NZ:en"},
+]
+
+# ---------------------------------------------------------------------------
 # ③ 地域バランス (合計およそ1000件のピンを狙う設定)
 # ---------------------------------------------------------------------------
 # 各地域から最低何件ピンを立てたいか(ノルマ)。数字を増減させると、その地域の
@@ -198,7 +271,7 @@ GENRE_COLORS = {
     "経済": "#10b981",        # emerald-500
     "エンタメ": "#ec4899",    # pink-500
     "政治": "#ef4444",        # red-500
-    "環境": "#22c55e",        # green-500
+    "環境": "#14b8a6",        # teal-500(「経済」のemerald-500と紛らわしかったため変更)
     "スポーツ": "#f59e0b",    # amber-500
     "科学": "#8b5cf6",        # violet-500
     "事件・事故": "#64748b",  # slate-500
