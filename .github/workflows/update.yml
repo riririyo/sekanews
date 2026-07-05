@@ -37,14 +37,6 @@ jobs:
           git fetch origin gh-pages --depth=1 2>/dev/null || true
           git show origin/gh-pages:geocode_cache.json > geocode_cache.json 2>/dev/null || echo "{}" > geocode_cache.json
 
-      # news_data.json も同様に、蓄積方式(前回までのピン+今回の新規ピン)を実現するため
-      # 直近でgh-pagesに公開したものを取ってきてから pipeline.py を実行する。
-      # 無ければ(初回実行時など)mainのサンプルのままpipeline.pyに渡り、今回分のみで出力される。
-      - name: Restore previous news_data.json from gh-pages
-        continue-on-error: true
-        run: |
-          git show origin/gh-pages:news_data.json > news_data.json 2>/dev/null || true
-
       - name: Run pipeline
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -54,6 +46,7 @@ jobs:
         run: |
           mkdir -p _site
           cp index.html _site/
+          cp info.html _site/
           cp news_data.json _site/
           cp geocode_cache.json _site/
 
