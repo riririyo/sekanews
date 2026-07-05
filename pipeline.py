@@ -772,25 +772,46 @@ def main():
         print("[ERROR] 記事が1件も取得できませんでした。ネットワークの状態を確認してください。")
         sys.exit(1)
 
-    print("=== ② AI要約・ジャンル・地名判定・タイトル和訳 (Groq) ===")
-    enriched = enrich_articles_with_ai(articles)
-    if not enriched:
-        print("[ERROR] AI判定を通過した記事が0件でした。config.pyのAI_MODELやプロンプトを確認してください。")
-        sys.exit(1)
+    # 前回までに蓄積済みの記事(=news_data.jsonに既にあるURL)は、内容が同じなのに
+    # 毎回AI判定をやり直すのは無駄なので、AI呼び出し前にここで除外する。
+    # Google Newsの"トップニュース"フィードは同じ記事が何時間も掲載され続ける
+    # ことが多く(NEWS_COUNTRIES 60ヶ国超 + LOCAL_CITIES 40都市超で、収集記事数は
+    # 1回の実行で数千件規模になりうる)、これをやらないとGroq無料枠(1日14,000回)を
+    # 既知記事の再判定だけで使い切ってしまいかねない。副次的に、既知記事の
+    # firstSeenAt(蓄積の起点時刻)が再判定のたびに現在時刻へ上書きされて
+    # ITEM_MAX_AGE_HOURSのTTLが実質リセットされ続けてしまう問題も、この除外により
+    # 併せて防げる(同じURLは常にkept_previous側の元のfirstSeenAtが引き継がれる)。
+    print("=== ② 前回分の読み込み + 既知記事の除外(AI判定の節約) ===")
+    previous_items, previous_generated_at = load_previous_items()
+    known_urls = {it.get("url") for it in previous_items if it.get("url")}
+    before_dedup_count = len(articles)
+    articles = [a for a in articles if a.get("url") not in known_urls]
+    skipped_known = before_dedup_count - len(articles)
+    if skipped_known:
+        print(f"  [DEDUP] 前回までに処理済みの記事を除外: {skipped_known}件 (新規候補{len(articles)}件)")
 
-    print("=== ③ 重複除去 + 地域ノルマで選抜 ===")
-    selected = select_by_region_quota(enriched)
+    print("=== ③ AI要約・ジャンル・地名判定・タイトル和訳 (Groq) ===")
+    if articles:
+        enriched = enrich_articles_with_ai(articles)
+        if not enriched:
+            print("  [WARN] 新規記事はあったがAI判定を通過した記事が0件でした"
+                  "(Groqのレート制限/障害の可能性)。今回は新規ピン無しで前回分のみ出力します。")
+    else:
+        print("  [INFO] 新規記事が無かったためAI判定はスキップします。")
+        enriched = []
 
-    print("=== ④ 座標変換 (Nominatim) ===")
+    print("=== ④ 重複除去 + 地域ノルマで選抜 ===")
+    selected = select_by_region_quota(enriched) if enriched else []
+
+    print("=== ⑤ 座標変換 (Nominatim) ===")
     cache = load_geocode_cache()
     try:
-        new_items = build_new_items(selected, cache)
+        new_items = build_new_items(selected, cache) if selected else []
     finally:
         # 途中で失敗しても、そこまでに得たジオコーディング結果は必ずキャッシュに残す。
         save_geocode_cache(cache)
 
-    print("=== ⑤ 前回分・スポンサーピンとマージしてJSON出力 ===")
-    previous_items, previous_generated_at = load_previous_items()
+    print("=== ⑥ 前回分・スポンサーピンとマージしてJSON出力 ===")
     now_dt = datetime.now(timezone.utc)
     now_iso = now_dt.isoformat().replace("+00:00", "Z")
     merged = merge_with_previous(new_items, previous_items, previous_generated_at, now_dt)
