@@ -573,6 +573,7 @@
 
         // --- ジャンルフィルタ・キーワード検索 ---
         let activeCategories = null; // null = 初回未初期化(buildLegendで全ジャンルONにする)
+        let allCategoriesSet = new Set(); // データ中に実際に存在する全ジャンル(ソロ解除時に使う)
         let searchQuery = '';
 
         function matchesFilter(news) {
@@ -590,12 +591,16 @@
             renderMap();
         });
 
+        // ジャンルクリック = そのジャンルだけを表示(ソロ表示)。
+        // 既にそのジャンル1つだけがソロ表示中の状態でもう一度押すと、全ジャンル表示に戻す。
         window.toggleCategory = function (category) {
-            if (activeCategories.has(category)) {
-                activeCategories.delete(category);
+            const isSoloingThis = activeCategories.size === 1 && activeCategories.has(category);
+            if (isSoloingThis) {
+                activeCategories = new Set(allCategoriesSet);
             } else {
-                activeCategories.add(category);
+                activeCategories = new Set([category]);
             }
+            buildLegend();
             renderMap();
         };
 
@@ -682,8 +687,9 @@
             newsData.forEach(n => {
                 if (!seen.has(n.category)) seen.set(n.category, n.color);
             });
+            allCategoriesSet = new Set(seen.keys());
             if (!activeCategories) {
-                activeCategories = new Set(seen.keys());
+                activeCategories = new Set(allCategoriesSet);
             }
             legendContainer.innerHTML = Array.from(seen.entries()).map(([category, color]) => {
                 const isActive = activeCategories.has(category);
