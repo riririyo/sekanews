@@ -1,0 +1,59 @@
+name: Update News Data
+
+on:
+  schedule:
+    # 1時間ごと(毎時0分)。GitHub Actionsのcronは高負荷時に数分〜十数分遅延することがある。
+    - cron: "0 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-news-data
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source (main)
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # geocode_cache.json は「前回までに調べた地名の座標」を再利用するためのキャッシュ。
+      # mainブランチには保存しない(自動コミットで履歴が汚れるのを避けるため)ので、
+      # 直近でgh-pagesに公開したキャッシュを取ってきて再利用する。無ければ空から始める。
+      - name: Restore geocode cache from gh-pages
+        continue-on-error: true
+        run: |
+          git fetch origin gh-pages --depth=1 2>/dev/null || true
+          git show origin/gh-pages:geocode_cache.json > geocode_cache.json 2>/dev/null || echo "{}" > geocode_cache.json
+
+      - name: Run pipeline
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python3 pipeline.py
+
+      - name: Prepare publish folder
+        run: |
+          mkdir -p _site
+          cp index.html _site/
+          cp news_data.json _site/
+          cp geocode_cache.json _site/
+
+      # gh-pagesブランチに「毎回1コミットだけ」で公開する(force_orphan)。
+      # これによりmainのコミット履歴は一切自動更新で汚れない。
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./_site
+          force_orphan: true
