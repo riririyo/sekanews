@@ -24,6 +24,7 @@ from config import (
     AI_MODEL,
     ARTICLES_PER_AI_BATCH,
     DUPLICATE_TITLE_SIMILARITY_THRESHOLD,
+    GDELT_GLOBAL_POOL_MAX_RECORDS,
     GDELT_MAX_RECORDS_CAP,
     GDELT_MAX_RECORDS_PER_REGION,
     GDELT_MAX_RETRIES,
@@ -74,7 +75,7 @@ def fetch_region_articles(region_name, query_filter, max_records):
         except Exception as e:
             last_err = e
             if attempt < GDELT_MAX_RETRIES:
-                wait = 2 * (attempt + 1)
+                wait = 15 * (2 ** attempt)
                 print(f"    [WARN] GDELT取得失敗(試行{attempt + 1}, {region_name}): {e} -> {wait}秒待って再試行")
                 time.sleep(wait)
 
@@ -85,6 +86,19 @@ def fetch_region_articles(region_name, query_filter, max_records):
 def collect_all_articles():
     all_articles = []
     seen_urls = set()
+
+    print("  [FETCH] 全世界プール(地域絞り込みなし、フォールバック用)")
+    global_articles = fetch_region_articles("グローバル", "sourcelang:eng", GDELT_GLOBAL_POOL_MAX_RECORDS)
+    added = 0
+    for a in global_articles:
+        a["_region_hint"] = None
+        url = a.get("url")
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            all_articles.append(a)
+            added += 1
+    print(f"          -> {added}件追加(重複除く)")
+    time.sleep(GDELT_REQUEST_DELAY_SEC)
 
     for region_name, query_filter in REGION_QUERIES.items():
         quota = REGION_QUOTAS.get(region_name, 0)
@@ -176,7 +190,6 @@ def call_groq_batch(batch):
                 raise ValueError("'results' が配列ではありません")
             return results
         except Exception as e:
-            # Authorizationヘッダーやペイロード本文はログに出さない(APIキー漏洩防止)。
             last_err = e
             wait = 2 * (attempt + 1)
             print(f"  [WARN] Groq呼び出し失敗(試行{attempt + 1}): {type(e).__name__}: {e} -> {wait}秒待って再試行")
@@ -213,16 +226,14 @@ def enrich_articles_with_ai(articles):
             place = (r.get("place") or "").strip()
             summary = (r.get("summary_ja") or "").strip()
 
-            # --- AIの返りを検証(不正なジャンル/地域は矯正 or 除外) ---
             if genre not in VALID_GENRES:
                 genre = "その他"
             if region not in REGION_QUOTAS:
-                continue  # 地域を集計できない記事はノルマ選抜の対象外にする
+                continue
 
             if article.get("_region_hint") and region != article["_region_hint"]:
                 region_mismatch_count += 1
 
-            # 地名が取れない記事はピンにしない、という設計上のルール
             if not place or not summary:
                 continue
 
@@ -246,7 +257,6 @@ def enrich_articles_with_ai(articles):
 # ③ 重複除去 + 地域ノルマで選抜
 # ---------------------------------------------------------------------------
 def dedup_similar_titles(items):
-    """同じ出来事を報じた似たタイトルの記事を弾く(O(n^2)だが選抜後の件数=最大MAX_PINS_TOTALなので許容範囲)。"""
     kept = []
     kept_titles = []
     removed = 0
@@ -297,7 +307,6 @@ def select_by_region_quota(enriched):
 # ④ 座標変換 (Nominatim)
 # ---------------------------------------------------------------------------
 def normalize_place_key(place):
-    """表記揺れ(全角/半角、大文字小文字、前後空白)を吸収してキャッシュのヒット率を上げる。"""
     normalized = unicodedata.normalize("NFKC", place).strip().casefold()
     return " ".join(normalized.split())
 
@@ -330,14 +339,13 @@ def geocode_place(place, cache):
         resp = requests.get(url, params=params, headers=headers, timeout=15)
         resp.raise_for_status()
         results = resp.json()
-        time.sleep(NOMINATIM_DELAY_SEC)  # Nominatim利用規約: 1秒1回厳守
+        time.sleep(NOMINATIM_DELAY_SEC)
 
         if results:
             coords = {"lat": float(results[0]["lat"]), "lng": float(results[0]["lon"])}
             cache[key] = coords
             return coords
         else:
-            # 失敗はキャッシュに永続化しない(一時的な問題かもしれないので次回また試す)
             return None
     except Exception as e:
         print(f"  [WARN] ジオコーディング失敗 '{place}': {e}")
@@ -360,12 +368,11 @@ def build_output(selected, cache):
         place = a["ai_place"]
         coords = geocode_place(place, cache)
         if not coords:
-            continue  # 座標が取れなければピンにしない
+            continue
 
         genre = a["ai_genre"]
         color = GENRE_COLORS.get(genre, GENRE_COLORS["その他"])
 
-        # GDELTのsocialimage(実際の記事画像)があれば優先し、無ければプレースホルダー。
         social_image = a.get("socialimage")
         image_url = social_image if _valid_http_url(social_image) else f"{PLACEHOLDER_IMAGE_BASE}/{next_id}/800/600"
 
@@ -375,7 +382,7 @@ def build_output(selected, cache):
             "category": genre,
             "title": a.get("title", ""),
             "aiSummary": a["ai_summary"],
-            "aiSummaryIsHeadlineOnly": True,  # フロントで「見出しのみからのAI推測」と明示するためのフラグ
+            "aiSummaryIsHeadlineOnly": True,
             "url": a.get("url", ""),
             "color": color,
             "imageUrl": image_url,
@@ -411,7 +418,6 @@ def main():
     try:
         output = build_output(selected, cache)
     finally:
-        # 途中で失敗しても、そこまでに得たジオコーディング結果は必ずキャッシュに残す。
         save_geocode_cache(cache)
 
     print("=== ⑤ JSON出力 ===")
