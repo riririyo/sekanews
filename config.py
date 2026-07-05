@@ -69,6 +69,8 @@ NEWS_MAX_ITEMS_PER_COUNTRY = 100
 # ここに無い国の都市名がAIによって記事から読み取られることもある
 # (例: 記事本文中に別の国の地名が出てくる場合など)。
 # ザンビア・ボリビアのような、通常あまり報道で目立たない国もあえて含めている。
+# 2026-07-05: 西欧・北欧・中東・アフリカ・中南米の追加国を足して、地図全体の
+# 偏り(特にヨーロッパ・北米方面が薄く見える問題)を緩和した。
 NEWS_COUNTRIES = [
     # --- 日本 ---
     {"label": "日本", "gl": "JP", "hl": "ja", "ceid": "JP:ja"},
@@ -95,6 +97,8 @@ NEWS_COUNTRIES = [
     {"label": "トルコ", "gl": "TR", "hl": "tr", "ceid": "TR:tr"},
     {"label": "アラブ首長国連邦", "gl": "AE", "hl": "en-AE", "ceid": "AE:en"},
     {"label": "ヨルダン", "gl": "JO", "hl": "ar", "ceid": "JO:ar"},
+    {"label": "イラン", "gl": "IR", "hl": "fa", "ceid": "IR:fa"},
+    {"label": "イラク", "gl": "IQ", "hl": "ar", "ceid": "IQ:ar"},
     # --- アフリカ北部 ---
     {"label": "エジプト", "gl": "EG", "hl": "ar", "ceid": "EG:ar"},
     {"label": "モロッコ", "gl": "MA", "hl": "fr", "ceid": "MA:fr"},
@@ -109,6 +113,8 @@ NEWS_COUNTRIES = [
     {"label": "ウガンダ", "gl": "UG", "hl": "en-UG", "ceid": "UG:en"},
     {"label": "ザンビア", "gl": "ZM", "hl": "en-ZM", "ceid": "ZM:en"},
     {"label": "ジンバブエ", "gl": "ZW", "hl": "en-ZW", "ceid": "ZW:en"},
+    {"label": "エチオピア", "gl": "ET", "hl": "en-ET", "ceid": "ET:en"},
+    {"label": "セネガル", "gl": "SN", "hl": "fr", "ceid": "SN:fr"},
     # --- 西欧 ---
     {"label": "イギリス", "gl": "GB", "hl": "en-GB", "ceid": "GB:en"},
     {"label": "フランス", "gl": "FR", "hl": "fr", "ceid": "FR:fr"},
@@ -116,6 +122,11 @@ NEWS_COUNTRIES = [
     {"label": "イタリア", "gl": "IT", "hl": "it", "ceid": "IT:it"},
     {"label": "スペイン", "gl": "ES", "hl": "es", "ceid": "ES:es"},
     {"label": "オランダ", "gl": "NL", "hl": "nl", "ceid": "NL:nl"},
+    {"label": "スウェーデン", "gl": "SE", "hl": "sv", "ceid": "SE:sv"},
+    {"label": "スイス", "gl": "CH", "hl": "de", "ceid": "CH:de"},
+    {"label": "ポルトガル", "gl": "PT", "hl": "pt-PT", "ceid": "PT:pt-150"},
+    {"label": "ギリシャ", "gl": "GR", "hl": "el", "ceid": "GR:el"},
+    {"label": "アイルランド", "gl": "IE", "hl": "en-IE", "ceid": "IE:en"},
     # --- 東欧・ロシア ---
     {"label": "ロシア", "gl": "RU", "hl": "ru", "ceid": "RU:ru"},
     {"label": "ポーランド", "gl": "PL", "hl": "pl", "ceid": "PL:pl"},
@@ -133,6 +144,7 @@ NEWS_COUNTRIES = [
     {"label": "ボリビア", "gl": "BO", "hl": "es-419", "ceid": "BO:es-419"},
     {"label": "エクアドル", "gl": "EC", "hl": "es-419", "ceid": "EC:es-419"},
     {"label": "チリ", "gl": "CL", "hl": "es-419", "ceid": "CL:es-419"},
+    {"label": "キューバ", "gl": "CU", "hl": "es-419", "ceid": "CU:es-419"},
     # --- オセアニア ---
     {"label": "オーストラリア", "gl": "AU", "hl": "en-AU", "ceid": "AU:en"},
     {"label": "ニュージーランド", "gl": "NZ", "hl": "en-NZ", "ceid": "NZ:en"},
@@ -148,6 +160,8 @@ NEWS_COUNTRIES = [
 #       穴埋めされるので、合計ピン数自体はMAX_PINS_TOTALに近づく。
 # なお、この分類はNEWS_COUNTRIESの取得元とは独立していて、実際にどの地域に
 # 割り振られるかはAIが記事内容から判定する(ai_region)。
+# また、この数字は「1回の実行(1時間ごと)で新しく採用したい件数」の目安であって、
+# 地図の合計ピン数の目安ではない(合計は蓄積されるためMAX_PINS_TOTALに近づいていく)。
 REGION_QUOTAS = {
     "日本": 90,
     "東アジア": 90,
@@ -202,6 +216,16 @@ DUPLICATE_TITLE_SIMILARITY_THRESHOLD = 0.85
 # (「東京」のピンが常に全く同じ1点に積み重なって見えるのを防ぐ目的)。
 DUPLICATE_COORD_JITTER_DEGREES = 0.03
 
+# 見出しにこれらのキーワード(部分一致・大文字小文字/全角半角区別なし)が含まれる
+# 記事は、閲覧体験に配慮してピン化しない(完全なフィルタではなく簡易的な
+# ブロックリスト方式)。過激・グロテスクな見出しをそのまま地図に載せないための
+# 簡易ガード。必要に応じて増減させてよい。
+SENSITIVE_KEYWORDS = [
+    "死体", "遺体画像", "遺体の写真", "惨殺", "斬首", "轢死", "焼死体",
+    "自殺の方法", "首吊り", "凄惨な現場",
+    "beheading video", "graphic footage", "murder scene photo",
+]
+
 # ---------------------------------------------------------------------------
 # ⑤ ジオコーディング (Nominatim / OpenStreetMap)
 # ---------------------------------------------------------------------------
@@ -213,6 +237,9 @@ NOMINATIM_USER_AGENT = "WorldNewsMapApp/1.0 (rimocon.rimocon.rimocon@gmail.com)"
 # 「bulk geocoding」に近く、本来はセルフホストや商用ジオコーダー推奨とされている。
 # geocode_cache.json による再利用でリクエスト数そのものを減らすのが最大の対策。
 NOMINATIM_DELAY_SEC = 1.1
+
+# 検索結果の表記を英語に揃えるための言語指定(同名地名の表記ゆれを減らす目的)。
+NOMINATIM_ACCEPT_LANGUAGE = "en"
 
 GEOCODE_CACHE_FILE = "geocode_cache.json"
 
@@ -231,6 +258,32 @@ PLACEHOLDER_IMAGE_BASE = "https://picsum.photos/seed"
 # 埋め込む next_update_at の算出に使う。
 UPDATE_INTERVAL_MINUTES = 60
 
-# 注意: サイトタイトル/サブタイトル(「せかにゅ」「ニュースと地理」)は
-# index.html 側に直接書いてある(フロントは静的1ファイルでテンプレート化していないため)。
-# 変更する場合は index.html の <title> と #site-title / #site-subtitle を編集すること。
+# ---------------------------------------------------------------------------
+# ⑦ スポンサーピン(将来のマネタイズ用の枠組み)
+# ---------------------------------------------------------------------------
+# 企業・個人からお金をもらって地図上に「広告ピン」を常時表示するための枠組み。
+# ここにエントリを追加すると、次回のpipeline.py実行から自動的に地図に反映される
+# (ニュースのように48時間で消えたりせず、ここに書いてある限り常に表示され続ける)。
+# 表示上は必ず「PR」バッジが付き、広告であることが一目でわかるようにしてある
+# (2023年施行のステマ規制=景品表示法対応。広告と明示しない表示は不可)。
+# デフォルトは空(実際のスポンサーが決まったらここに追記する)。
+#
+# 書き方の例:
+# SPONSOR_PINS = [
+#     {
+#         "name": "サンプル株式会社",              # ピンのタイトルに使われる
+#         "place": "Tokyo, Japan",                 # 表示用の地名
+#         "lat": 35.6812,                          # 緯度
+#         "lng": 139.7671,                         # 経度
+#         "message": "新商品発売中！詳しくはこちら。",  # AI要約欄に表示される文言
+#         "url": "https://example.com",            # クリック時の遷移先
+#         "imageUrl": "https://example.com/banner.jpg",  # 任意。省略可
+#         "color": "#eab308",                      # 任意。省略時は金色になる
+#     },
+# ]
+SPONSOR_PINS = []
+
+# 注意: サイトタイトル/サブタイトル(「せかにゅ」「ニュースと地理」)や、
+# ダークモード・検索・投げ銭リンクなどのフロント側設定は index.html 側に直接
+# 書いてある(フロントは静的1ファイルでテンプレート化していないため)。
+# 変更する場合は index.html の該当箇所(#site-title, SUPPORT_URL 等)を編集すること。
