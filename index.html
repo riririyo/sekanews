@@ -140,6 +140,7 @@
             padding: 5px 10px;
             border-radius: 8px;
             display: none;
+            line-height: 1.5;
         }
 
         #loading-overlay {
@@ -186,6 +187,7 @@
                 <div>
                     <h1 id="site-title" class="text-lg font-bold leading-tight text-gray-900">せかにゅ</h1>
                     <p id="site-subtitle" class="text-xs text-gray-500">ニュースと地理</p>
+                    <p id="today-date" class="text-[11px] text-gray-400"></p>
                 </div>
             </div>
 
@@ -206,7 +208,7 @@
     <!-- サンプル表示中/更新停滞などの通知 -->
     <div id="status-banner" role="status"></div>
 
-    <!-- 最終更新時刻 -->
+    <!-- 最終更新時刻・次回更新予定 -->
     <div id="last-updated"></div>
 
     <!-- エリア内のニュースを見るボタン -->
@@ -245,8 +247,10 @@
                 location: { lat: 43.0618, lng: 141.3545, name: "札幌" },
                 category: "エンタメ",
                 title: "大通公園で新感覚の没入型イルミネーションが開幕",
+                originalTitle: "大通公園で新感覚の没入型イルミネーションが開幕",
                 aiSummary: "最新のプロジェクションマッピング技術を活用した光の祭典。AIが来場者の動きに反応して光の演出を変化させる点が話題を呼んでいます。",
                 aiSummaryIsHeadlineOnly: true,
+                publishedAt: null,
                 url: "https://example.com/sapporo-news",
                 color: "#ec4899",
                 imageUrl: "https://picsum.photos/seed/1/800/600"
@@ -256,8 +260,10 @@
                 location: { lat: 24.7136, lng: 46.6753, name: "リヤド" },
                 category: "経済",
                 title: "サウジ、巨大スマートシティ「NEOM」に10兆円規模の追加投資",
+                originalTitle: "サウジ、巨大スマートシティ「NEOM」に10兆円規模の追加投資",
                 aiSummary: "脱石油依存を掲げる国家戦略ビジョン2030の中核プロジェクト。再生可能エネルギーのみで稼働する直線型都市の建設が急ピッチで進んでいます。",
                 aiSummaryIsHeadlineOnly: true,
+                publishedAt: null,
                 url: "https://example.com/saudi-news",
                 color: "#10b981",
                 imageUrl: "https://picsum.photos/seed/2/800/600"
@@ -267,8 +273,10 @@
                 location: { lat: -1.2921, lng: 36.8219, name: "ナイロビ" },
                 category: "テック",
                 title: "ナイロビ発のフィンテック企業が大型資金調達を実施",
+                originalTitle: "ナイロビ発のフィンテック企業が大型資金調達を実施",
                 aiSummary: "アフリカ全土でのモバイル送金プラットフォーム拡大に向け、欧米のベンチャーキャピタルから約150億円を調達。「シリコンサバンナ」の勢いが加速。",
                 aiSummaryIsHeadlineOnly: true,
+                publishedAt: null,
                 url: "https://example.com/kenya-news",
                 color: "#3b82f6",
                 imageUrl: "https://picsum.photos/seed/3/800/600"
@@ -278,8 +286,10 @@
                 location: { lat: 37.7749, lng: -122.4194, name: "サンフランシスコ" },
                 category: "テック",
                 title: "次世代AIモデルが発表、複雑な推論タスクで人間超え",
+                originalTitle: "次世代AIモデルが発表、複雑な推論タスクで人間超え",
                 aiSummary: "大手AI研究所が最新モデルを公開。数学的推論やプログラミングにおいて、専門家レベルのスコアを記録したと発表されました。",
                 aiSummaryIsHeadlineOnly: true,
+                publishedAt: null,
                 url: "https://example.com/sf-news",
                 color: "#3b82f6",
                 imageUrl: "https://picsum.photos/seed/4/800/600"
@@ -289,8 +299,10 @@
                 location: { lat: -33.9249, lng: 18.4241, name: "ケープタウン" },
                 category: "環境",
                 title: "ケープタウン沖で新たな海洋エネルギー発電の試験開始",
+                originalTitle: "ケープタウン沖で新たな海洋エネルギー発電の試験開始",
                 aiSummary: "豊かな海洋資源を活かし、波力・潮力を用いた持続可能なエネルギープロジェクトがスタート。深刻な電力不足の解消に期待が寄せられています。",
                 aiSummaryIsHeadlineOnly: true,
+                publishedAt: null,
                 url: "https://example.com/sa-news",
                 color: "#10b981",
                 imageUrl: "https://picsum.photos/seed/5/800/600"
@@ -314,6 +326,27 @@
             return fallback;
         }
 
+        // --- 日時表示ヘルパー ---
+        const WEEKDAY_JA = ['日', '月', '火', '水', '木', '金', '土'];
+
+        function formatTodayDate() {
+            const now = new Date();
+            return `今日: ${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日(${WEEKDAY_JA[now.getDay()]})`;
+        }
+
+        function formatRelativeTime(iso) {
+            if (!iso) return null;
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return null;
+            const diffMin = Math.round((Date.now() - d.getTime()) / 60000);
+            if (diffMin < 1) return 'たった今';
+            if (diffMin < 60) return `${diffMin}分前`;
+            const diffHour = Math.round(diffMin / 60);
+            if (diffHour < 24) return `${diffHour}時間前`;
+            const diffDay = Math.round(diffHour / 24);
+            return `${diffDay}日前`;
+        }
+
         // 地図の初期化(データ取得前に先に表示できる)
         const map = L.map('map', { zoomControl: false }).setView([20.0, 60.0], 3);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -331,6 +364,7 @@
         const legendContainer = document.getElementById('legend-container');
         const statusBanner = document.getElementById('status-banner');
         const lastUpdatedEl = document.getElementById('last-updated');
+        const todayDateEl = document.getElementById('today-date');
         const loadingOverlay = document.getElementById('loading-overlay');
 
         let clusterGroup = null;
@@ -342,7 +376,7 @@
             statusBanner.classList.toggle('stale', !!isStale);
         }
 
-        function showLastUpdated(generatedAtIso) {
+        function showLastUpdated(generatedAtIso, nextUpdateAtIso) {
             if (!generatedAtIso) return;
             const generatedAt = new Date(generatedAtIso);
             if (isNaN(generatedAt.getTime())) return;
@@ -354,7 +388,21 @@
             } else {
                 label = `最終更新: ${Math.round(diffMinutes / 60)}時間前`;
             }
-            lastUpdatedEl.textContent = label;
+
+            let nextLabel = '';
+            if (nextUpdateAtIso) {
+                const nextAt = new Date(nextUpdateAtIso);
+                if (!isNaN(nextAt.getTime())) {
+                    const hh = String(nextAt.getHours()).padStart(2, '0');
+                    const mm = String(nextAt.getMinutes()).padStart(2, '0');
+                    const remainMin = Math.round((nextAt.getTime() - Date.now()) / 60000);
+                    nextLabel = remainMin > 0
+                        ? `次回更新予定: ${hh}:${mm}頃(あと約${remainMin}分)`
+                        : `次回更新予定: 間もなく`;
+                }
+            }
+
+            lastUpdatedEl.innerHTML = `<div>${escapeHtml(label)}</div>` + (nextLabel ? `<div>${escapeHtml(nextLabel)}</div>` : '');
             lastUpdatedEl.style.display = 'block';
 
             // 3時間以上更新が無ければ、パイプラインが止まっている可能性を警告する
@@ -386,20 +434,32 @@
             const safeImg = safeHttpUrl(news.imageUrl, 'https://picsum.photos/800/600');
             const safeArticleUrl = safeHttpUrl(news.url, '#');
             const disclaimer = news.aiSummaryIsHeadlineOnly
-                ? `<p class="text-[11px] text-purple-400 mt-2">※ 見出しのみからAIが推測した要約です。詳細は元記事でご確認ください。</p>`
+                ? `<p class="text-[11px] text-purple-400 mt-2">※ 見出しから推測したAI要約です(一般的な背景情報の補足を含む場合があります)。タイトルもAIによる日本語訳です。詳細は元記事でご確認ください。</p>`
+                : '';
+
+            const relTime = formatRelativeTime(news.publishedAt);
+            const timeHtml = relTime
+                ? `<span class="text-sm text-gray-500 flex items-center gap-1"><i class="ph ph-clock" aria-hidden="true"></i> ${escapeHtml(relTime)}</span>`
+                : '';
+
+            const showOriginal = news.originalTitle && news.originalTitle !== news.title;
+            const originalHtml = showOriginal
+                ? `<p class="text-xs text-gray-400 mt-1.5">原文タイトル: ${escapeHtml(news.originalTitle)}</p>`
                 : '';
 
             sidebarContent.innerHTML = `
                 <div>
-                    <div class="flex items-center gap-2 mb-3">
+                    <div class="flex items-center gap-2 mb-3 flex-wrap">
                         <span class="px-2.5 py-1 rounded-full text-xs font-bold text-white" style="background-color: ${escapeHtml(news.color)}">
                             ${escapeHtml(news.category)}
                         </span>
                         <span class="text-sm text-gray-500 flex items-center gap-1">
                             <i class="ph-fill ph-map-pin" aria-hidden="true"></i> ${escapeHtml(news.location.name)}
                         </span>
+                        ${timeHtml}
                     </div>
                     <h2 class="text-2xl font-extrabold text-gray-900 leading-tight">${escapeHtml(news.title)}</h2>
+                    ${originalHtml}
                 </div>
 
                 <div class="rounded-xl overflow-hidden shadow-md h-48 bg-gray-200">
@@ -452,6 +512,8 @@
             } else {
                 let listHtml = `<h2 class="text-xl font-extrabold mb-6 flex items-center gap-2"><i class="ph ph-map-pin" aria-hidden="true"></i> 表示中エリアのニュース(${visibleNews.length}件)</h2><div class="space-y-4">`;
                 visibleNews.forEach(news => {
+                    const relTime = formatRelativeTime(news.publishedAt);
+                    const timeBadge = relTime ? `<span class="text-[11px] text-gray-400">・${escapeHtml(relTime)}</span>` : '';
                     listHtml += `
                         <div class="bg-white border border-gray-100 rounded-xl p-4 shadow-sm hover:shadow-md cursor-pointer transition-shadow" role="button" tabindex="0"
                              onclick="openSidebarFromList(${news.id})"
@@ -459,6 +521,7 @@
                             <div class="flex items-center gap-2 mb-2">
                                 <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${escapeHtml(news.color)}"></span>
                                 <span class="text-xs font-bold text-gray-500">${escapeHtml(news.location.name)}</span>
+                                ${timeBadge}
                             </div>
                             <h3 class="font-bold text-sm leading-tight text-gray-900">${escapeHtml(news.title)}</h3>
                         </div>
@@ -565,14 +628,19 @@
         }
 
         function normalizeNewsPayload(data) {
-            // 旧形式(配列そのもの)/新形式({generated_at, count, items})の両方を許容する
+            // 旧形式(配列そのもの)/新形式({generated_at, next_update_at, count, items})の
+            // 両方を許容する
             if (Array.isArray(data)) {
-                return { items: data, generated_at: null };
+                return { items: data, generated_at: null, next_update_at: null };
             }
             if (data && Array.isArray(data.items)) {
-                return { items: data.items, generated_at: data.generated_at || null };
+                return {
+                    items: data.items,
+                    generated_at: data.generated_at || null,
+                    next_update_at: data.next_update_at || null,
+                };
             }
-            return { items: [], generated_at: null };
+            return { items: [], generated_at: null, next_update_at: null };
         }
 
         // news_data.json を読み込む。失敗したらサンプルデータで表示する。
@@ -581,6 +649,7 @@
         //   を立てて開くか、GitHub Pages / Cloudflare Pages にデプロイして見ること。
         async function loadNewsData() {
             let generatedAt = null;
+            let nextUpdateAt = null;
             try {
                 const res = await fetch('news_data.json', { cache: 'no-store' });
                 if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -589,6 +658,7 @@
                 if (normalized.items.length === 0) throw new Error('news_data.json が空でした');
                 newsData = normalized.items;
                 generatedAt = normalized.generated_at;
+                nextUpdateAt = normalized.next_update_at;
             } catch (e) {
                 console.warn('news_data.json 読み込み失敗。サンプルデータで表示します。', e);
                 newsData = sampleNewsData;
@@ -596,7 +666,8 @@
             }
 
             renderMap();
-            if (generatedAt) showLastUpdated(generatedAt);
+            todayDateEl.textContent = formatTodayDate();
+            if (generatedAt) showLastUpdated(generatedAt, nextUpdateAt);
             loadingOverlay.style.display = 'none';
         }
 
