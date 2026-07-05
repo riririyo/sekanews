@@ -1,0 +1,61 @@
+{
+  "generated_at": "2026-07-05T00:00:00Z",
+  "count": 5,
+  "items": [
+    {
+      "id": 1,
+      "location": { "lat": 43.0618, "lng": 141.3545, "name": "Sapporo, Japan" },
+      "category": "エンタメ",
+      "title": "大通公園で新感覚の没入型イルミネーションが開幕",
+      "aiSummary": "最新のプロジェクションマッピング技術を活用した光の祭典が話題になっています。",
+      "aiSummaryIsHeadlineOnly": true,
+      "url": "https://example.com/sapporo-news",
+      "color": "#ec4899",
+      "imageUrl": "https://picsum.photos/seed/1/800/600"
+    },
+    {
+      "id": 2,
+      "location": { "lat": 24.7136, "lng": 46.6753, "name": "Riyadh, Saudi Arabia" },
+      "category": "経済",
+      "title": "サウジ、巨大スマートシティ「NEOM」に追加投資",
+      "aiSummary": "脱石油依存を掲げる国家戦略ビジョン2030の中核プロジェクトが進行中です。",
+      "aiSummaryIsHeadlineOnly": true,
+      "url": "https://example.com/saudi-news",
+      "color": "#10b981",
+      "imageUrl": "https://picsum.photos/seed/2/800/600"
+    },
+    {
+      "id": 3,
+      "location": { "lat": -1.2921, "lng": 36.8219, "name": "Nairobi, Kenya" },
+      "category": "テック",
+      "title": "ナイロビ発のフィンテック企業が大型資金調達を実施",
+      "aiSummary": "アフリカのモバイル送金プラットフォーム拡大に向けた資金調達が話題です。",
+      "aiSummaryIsHeadlineOnly": true,
+      "url": "https://example.com/kenya-news",
+      "color": "#3b82f6",
+      "imageUrl": "https://picsum.photos/seed/3/800/600"
+    },
+    {
+      "id": 4,
+      "location": { "lat": 37.7749, "lng": -122.4194, "name": "San Francisco, USA" },
+      "category": "テック",
+      "title": "次世代AIモデルが発表、複雑な推論タスクで人間超え",
+      "aiSummary": "大手AI研究所が最新モデルを公開したと報じられています。",
+      "aiSummaryIsHeadlineOnly": true,
+      "url": "https://example.com/sf-news",
+      "color": "#3b82f6",
+      "imageUrl": "https://picsum.photos/seed/4/800/600"
+    },
+    {
+      "id": 5,
+      "location": { "lat": -33.9249, "lng": 18.4241, "name": "Cape Town, South Africa" },
+      "category": "環境",
+      "title": "ケープタウン沖で新たな海洋エネルギー発電の試験開始",
+      "aiSummary": "波力・潮力を用いた持続可能なエネルギープロジェクトが始まりました。",
+      "aiSummaryIsHeadlineOnly": true,
+      "url": "https://example.com/sa-news",
+      "color": "#10b981",
+      "imageUrl": "https://picsum.photos/seed/5/800/600"
+    }
+  ]
+}
