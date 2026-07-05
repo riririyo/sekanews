@@ -16,6 +16,7 @@ pipeline.py
 config.pyに書いてある限り常に地図に表示され続ける。
 """
 
+import concurrent.futures
 import difflib
 import json
 import math
@@ -60,6 +61,7 @@ from config import (
     OUTPUT_FILE,
     PLACEHOLDER_IMAGE_BASE,
     REAL_IMAGE_FETCH_MAX_BYTES,
+    REAL_IMAGE_FETCH_MAX_WORKERS,
     REAL_IMAGE_FETCH_TIMEOUT_SEC,
     REGION_QUOTAS,
     SENSITIVE_KEYWORDS,
@@ -571,6 +573,32 @@ def build_new_items(selected, cache):
     coord_seen_count = {}
     now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
+    # og:image取得(記事ごとに最大REAL_IMAGE_FETCH_TIMEOUT_SEC秒かかりうる)は、下の
+    # ジオコーディングの逐次ループとは別に、先にまとめて並列で済ませておく。
+    # ジオコーディング(Nominatim)は利用規約上1.1秒/件を守る必要があり並列化できないが、
+    # og:imageの取得先は記事ごとにバラバラなニュースサイトなので、並列化してもポリシー上
+    # 問題になりにくい。これをやらないと、新規記事が多い回に"1.1秒+最大4秒"が記事数分
+    # そのまま積み上がり、パイプライン全体が60分(cronの実行間隔)を超えて次の定期実行と
+    # 衝突・キャンセルされ続けるリスクがある。
+    urls_needing_fetch = []
+    for a in selected:
+        url = a.get("url", "")
+        if url and not _valid_http_url(a.get("socialimage")):
+            urls_needing_fetch.append(url)
+
+    real_image_by_url = {}
+    if urls_needing_fetch:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=REAL_IMAGE_FETCH_MAX_WORKERS) as executor:
+            future_to_url = {
+                executor.submit(fetch_real_article_image, u): u for u in urls_needing_fetch
+            }
+            for future in concurrent.futures.as_completed(future_to_url):
+                u = future_to_url[future]
+                try:
+                    real_image_by_url[u] = future.result()
+                except Exception:
+                    real_image_by_url[u] = None
+
     for a in selected:
         place = a["ai_place"]
         coords = geocode_place(place, cache)
@@ -586,15 +614,15 @@ def build_new_items(selected, cache):
         color = GENRE_COLORS.get(genre, GENRE_COLORS["その他"])
 
         url = a.get("url", "")
-        # まずRSS自体に画像があればそれを使う(通常は無い)。無ければ記事ページの
-        # og:image(実際の記事のSNSシェア画像)を軽量に取りに行く。それも取れなければ
-        # ランダムなプレースホルダーは出さず、画像なし(None)として扱う
+        # まずRSS自体に画像があればそれを使う(通常は無い)。無ければ上で並列取得しておいた
+        # og:image(実際の記事のSNSシェア画像)を使う。それも取れなければランダムな
+        # プレースホルダーは出さず、画像なし(None)として扱う
         # (記事と無関係な写真が表示されるのは誤解を招く、という指摘を受けての変更)。
         social_image = a.get("socialimage")
         if _valid_http_url(social_image):
             image_url = social_image
         else:
-            image_url = fetch_real_article_image(url)
+            image_url = real_image_by_url.get(url)
 
         original_title = a.get("title", "")
         display_title = a.get("ai_title_ja") or original_title
