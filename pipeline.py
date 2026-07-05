@@ -24,10 +24,11 @@ from config import (
     AI_MODEL,
     ARTICLES_PER_AI_BATCH,
     DUPLICATE_TITLE_SIMILARITY_THRESHOLD,
+    FETCH_GROUPS,
     GDELT_GLOBAL_POOL_MAX_RECORDS,
     GDELT_MAX_RECORDS_CAP,
-    GDELT_MAX_RECORDS_PER_REGION,
     GDELT_MAX_RETRIES,
+    GDELT_MAX_RETRY_WAIT_SEC,
     GDELT_REQUEST_DELAY_SEC,
     GDELT_TIMESPAN,
     GENRE_COLORS,
@@ -39,7 +40,6 @@ from config import (
     NOMINATIM_USER_AGENT,
     OUTPUT_FILE,
     PLACEHOLDER_IMAGE_BASE,
-    REGION_QUERIES,
     REGION_QUOTAS,
     VALID_GENRES,
 )
@@ -75,7 +75,9 @@ def fetch_region_articles(region_name, query_filter, max_records):
         except Exception as e:
             last_err = e
             if attempt < GDELT_MAX_RETRIES:
-                wait = 15 * (2 ** attempt)
+                # GDELTの429は数秒待つ程度では解消しないことが多いので指数的に長く待つ
+                # (15s,30s,60s,120s,120s...)が、ジョブが終わらなくならないよう上限で頭打ちにする。
+                wait = min(15 * (2 ** attempt), GDELT_MAX_RETRY_WAIT_SEC)
                 print(f"    [WARN] GDELT取得失敗(試行{attempt + 1}, {region_name}): {e} -> {wait}秒待って再試行")
                 time.sleep(wait)
 
@@ -87,6 +89,9 @@ def collect_all_articles():
     all_articles = []
     seen_urls = set()
 
+    # 地域別クエリが軒並みレート制限(429)で失敗しても最低限の記事を確保できるよう、
+    # 国コードで絞らない「全世界の英語ニュース」をまず1回取得しておく。
+    # ここで拾った記事の地域は、後段のAI判定(ai_region)で振り分けられる。
     print("  [FETCH] 全世界プール(地域絞り込みなし、フォールバック用)")
     global_articles = fetch_region_articles("グローバル", "sourcelang:eng", GDELT_GLOBAL_POOL_MAX_RECORDS)
     added = 0
@@ -100,14 +105,14 @@ def collect_all_articles():
     print(f"          -> {added}件追加(重複除く)")
     time.sleep(GDELT_REQUEST_DELAY_SEC)
 
-    for region_name, query_filter in REGION_QUERIES.items():
-        quota = REGION_QUOTAS.get(region_name, 0)
-        if quota <= 0:
-            continue
-
-        max_records = max(quota * GDELT_MAX_RECORDS_PER_REGION, 10)
-        print(f"  [FETCH] {region_name} (ノルマ{quota}件 / 候補最大{min(max_records, GDELT_MAX_RECORDS_CAP)}件)")
-        articles = fetch_region_articles(region_name, query_filter, max_records)
+    # FETCH_GROUPS: 「取得(何回GDELTを叩くか)」を担当する数個の大きなグループ。
+    # 各地域に何件割り当てるか(ノルマ)は、この後のAI判定(ai_region)を経てから
+    # REGION_QUOTASに基づいて選抜されるので、ここでは各グループにつき一律で
+    # GDELT_MAX_RECORDS_CAP件をリクエストするだけでよい(グループ名とREGION_QUOTASの
+    # キーが一致している必要はない)。
+    for group_name, query_filter in FETCH_GROUPS.items():
+        print(f"  [FETCH] {group_name} (候補最大{GDELT_MAX_RECORDS_CAP}件)")
+        articles = fetch_region_articles(group_name, query_filter, GDELT_MAX_RECORDS_CAP)
 
         added = 0
         for a in articles:
@@ -190,6 +195,7 @@ def call_groq_batch(batch):
                 raise ValueError("'results' が配列ではありません")
             return results
         except Exception as e:
+            # Authorizationヘッダーやペイロード本文はログに出さない(APIキー漏洩防止)。
             last_err = e
             wait = 2 * (attempt + 1)
             print(f"  [WARN] Groq呼び出し失敗(試行{attempt + 1}): {type(e).__name__}: {e} -> {wait}秒待って再試行")
@@ -226,14 +232,16 @@ def enrich_articles_with_ai(articles):
             place = (r.get("place") or "").strip()
             summary = (r.get("summary_ja") or "").strip()
 
+            # --- AIの返りを検証(不正なジャンル/地域は矯正 or 除外) ---
             if genre not in VALID_GENRES:
                 genre = "その他"
             if region not in REGION_QUOTAS:
-                continue
+                continue  # 地域を集計できない記事はノルマ選抜の対象外にする
 
             if article.get("_region_hint") and region != article["_region_hint"]:
                 region_mismatch_count += 1
 
+            # 地名が取れない記事はピンにしない、という設計上のルール
             if not place or not summary:
                 continue
 
@@ -257,6 +265,7 @@ def enrich_articles_with_ai(articles):
 # ③ 重複除去 + 地域ノルマで選抜
 # ---------------------------------------------------------------------------
 def dedup_similar_titles(items):
+    """同じ出来事を報じた似たタイトルの記事を弾く(O(n^2)だが選抜後の件数=最大MAX_PINS_TOTALなので許容範囲)。"""
     kept = []
     kept_titles = []
     removed = 0
@@ -307,6 +316,7 @@ def select_by_region_quota(enriched):
 # ④ 座標変換 (Nominatim)
 # ---------------------------------------------------------------------------
 def normalize_place_key(place):
+    """表記揺れ(全角/半角、大文字小文字、前後空白)を吸収してキャッシュのヒット率を上げる。"""
     normalized = unicodedata.normalize("NFKC", place).strip().casefold()
     return " ".join(normalized.split())
 
@@ -339,13 +349,14 @@ def geocode_place(place, cache):
         resp = requests.get(url, params=params, headers=headers, timeout=15)
         resp.raise_for_status()
         results = resp.json()
-        time.sleep(NOMINATIM_DELAY_SEC)
+        time.sleep(NOMINATIM_DELAY_SEC)  # Nominatim利用規約: 1秒1回厳守
 
         if results:
             coords = {"lat": float(results[0]["lat"]), "lng": float(results[0]["lon"])}
             cache[key] = coords
             return coords
         else:
+            # 失敗はキャッシュに永続化しない(一時的な問題かもしれないので次回また試す)
             return None
     except Exception as e:
         print(f"  [WARN] ジオコーディング失敗 '{place}': {e}")
@@ -368,11 +379,12 @@ def build_output(selected, cache):
         place = a["ai_place"]
         coords = geocode_place(place, cache)
         if not coords:
-            continue
+            continue  # 座標が取れなければピンにしない
 
         genre = a["ai_genre"]
         color = GENRE_COLORS.get(genre, GENRE_COLORS["その他"])
 
+        # GDELTのsocialimage(実際の記事画像)があれば優先し、無ければプレースホルダー。
         social_image = a.get("socialimage")
         image_url = social_image if _valid_http_url(social_image) else f"{PLACEHOLDER_IMAGE_BASE}/{next_id}/800/600"
 
@@ -382,7 +394,7 @@ def build_output(selected, cache):
             "category": genre,
             "title": a.get("title", ""),
             "aiSummary": a["ai_summary"],
-            "aiSummaryIsHeadlineOnly": True,
+            "aiSummaryIsHeadlineOnly": True,  # フロントで「見出しのみからのAI推測」と明示するためのフラグ
             "url": a.get("url", ""),
             "color": color,
             "imageUrl": image_url,
@@ -418,6 +430,7 @@ def main():
     try:
         output = build_output(selected, cache)
     finally:
+        # 途中で失敗しても、そこまでに得たジオコーディング結果は必ずキャッシュに残す。
         save_geocode_cache(cache)
 
     print("=== ⑤ JSON出力 ===")
