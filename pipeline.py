@@ -2,7 +2,7 @@
 """
 pipeline.py
 ===========
-① ニュース取得(Google News RSS) → ② AI要約・ジャンル・地名判定(Groq)
+① ニュース取得(Google News RSS) → ② AI要約・ジャンル・地名判定・タイトル和訳(Groq)
 → ③ 重複除去・地域ノルマで選抜 → ④ 座標変換(Nominatim) → ⑤ news_data.json 出力
 
 設定はすべて config.py にまとめてあるので、挙動を変えたいときはそちらを編集する。
@@ -10,13 +10,15 @@ pipeline.py
 
 import difflib
 import json
+import math
 import os
 import sys
 import time
 import traceback
 import unicodedata
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 
 import requests
 
@@ -24,6 +26,7 @@ from config import (
     AI_MAX_RETRIES,
     AI_MODEL,
     ARTICLES_PER_AI_BATCH,
+    DUPLICATE_COORD_JITTER_DEGREES,
     DUPLICATE_TITLE_SIMILARITY_THRESHOLD,
     GENRE_COLORS,
     GEOCODE_CACHE_FILE,
@@ -42,6 +45,7 @@ from config import (
     OUTPUT_FILE,
     PLACEHOLDER_IMAGE_BASE,
     REGION_QUOTAS,
+    UPDATE_INTERVAL_MINUTES,
     VALID_GENRES,
 )
 
@@ -55,10 +59,27 @@ NEWS_REQUEST_HEADERS = {
     )
 }
 
+# 黄金角(度)。同じ座標に複数ピンが重なるとき、視覚的にきれいに散らすための
+# スパイラル配置に使う(向日葵の種の並びと同じ原理)。
+GOLDEN_ANGLE_DEG = 137.5077640500378
+
 
 # ---------------------------------------------------------------------------
 # ① ニュース取得 (Google News RSS: 国・言語ごとの「トップニュース」フィード)
 # ---------------------------------------------------------------------------
+def _parse_pubdate(raw_pubdate):
+    """RSSのpubDate(RFC822形式)をISO8601(UTC)文字列に変換する。パース失敗時はNone。"""
+    if not raw_pubdate:
+        return None
+    try:
+        dt = parsedate_to_datetime(raw_pubdate)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    except Exception:
+        return None
+
+
 def _parse_news_rss(xml_bytes, country_label):
     """Google News RSSのXMLをパースして記事リストに変換する。"""
     articles = []
@@ -69,10 +90,12 @@ def _parse_news_rss(xml_bytes, country_label):
         title_el = item.find("title")
         link_el = item.find("link")
         source_el = item.find("source")
+        pubdate_el = item.find("pubDate")
 
         raw_title = (title_el.text or "").strip() if title_el is not None else ""
         link = (link_el.text or "").strip() if link_el is not None else ""
         domain = (source_el.text or "").strip() if source_el is not None else ""
+        raw_pubdate = (pubdate_el.text or "").strip() if pubdate_el is not None else ""
 
         if not raw_title or not link:
             continue
@@ -88,6 +111,7 @@ def _parse_news_rss(xml_bytes, country_label):
             "url": link,
             "domain": domain,
             "socialimage": None,
+            "published_at": _parse_pubdate(raw_pubdate),
             "_region_hint": "",
             "_country_label": country_label,
         })
@@ -140,7 +164,7 @@ def collect_all_articles():
 
 
 # ---------------------------------------------------------------------------
-# ② AI要約・ジャンル・地名判定 (Groq)
+# ② AI要約・ジャンル・地名判定・タイトル和訳 (Groq)
 # ---------------------------------------------------------------------------
 def _build_prompt(batch):
     items_text = "\n".join(
@@ -159,17 +183,25 @@ def _build_prompt(batch):
         f"1. genre: 次のいずれか一つ -> {genre_list}\n"
         f"2. region: 次のいずれか一つ -> {region_list}\n"
         "3. place: 地図でジオコーディングできる具体的な地名(できれば都市名。"
+        "見出しに区・駅・施設名など都市より細かい地名があればそちらを優先すること)。"
         "国名しか分からない場合は国名でもよい。英語の一般的な地名表記で統一すること"
         "(例: '東京' ではなく 'Tokyo, Japan'、'ニューヨーク' ではなく 'New York, USA')。"
         "タイトルから具体的な場所が全く読み取れない場合は空文字\"\"。\n"
-        "4. summary_ja: 見出しから読み取れる範囲だけで書いた日本語の説明(40〜80字程度)。"
-        "本文を読んでいないので、見出しに無い具体的な数字・固有名詞・引用・詳細を"
-        "勝手に推測して付け加えないこと。見出しの内容を平易な日本語で言い換える程度に留める。"
-        "見出しが日本語以外の言語で書かれていても、内容を理解した上で日本語で要約すること。\n"
+        "4. title_ja: 見出しを自然な日本語に翻訳したもの。要約ではなく翻訳なので、"
+        "見出しの情報を削らずに日本語にすること。見出しが既に日本語の場合はそのまま"
+        "(表記の乱れがあれば軽く整える程度でよい)。\n"
+        "5. summary_ja: 見出しの内容について日本語で3〜4文(120〜200字程度)で説明する"
+        "文章。見出しに書かれていない具体的な数字・固有名詞・引用・結果を勝手に創作しないこと。"
+        "ただし、見出しに出てくる人物・組織・出来事の種類について一般的に知られている"
+        "背景情報(どんな職業/組織か、通常どんな文脈で報じられる話題かなど)を補って、"
+        "読み応えのある説明にするのは良い。断定できない部分は「〜とみられる」"
+        "「〜と考えられる」のような表現を使い、見出しに書かれた事実と区別すること。\n"
+        "見出しが日本語以外の言語で書かれていても、内容を理解した上でtitle_ja/"
+        "summary_jaは日本語で書くこと。\n"
         "\n"
         '出力は必ず {"results": [ {"index": 0, "genre": "...", "region": "...", '
-        '"place": "...", "summary_ja": "..."}, ... ] } という形のJSONオブジェクトのみ。'
-        "説明文やコードブロック記号は一切付けないこと。"
+        '"place": "...", "title_ja": "...", "summary_ja": "..."}, ... ] } '
+        "という形のJSONオブジェクトのみ。説明文やコードブロック記号は一切付けないこと。"
     )
     user_prompt = f"以下の記事を分析してください:\n{items_text}"
     return system_prompt, user_prompt
@@ -240,6 +272,7 @@ def enrich_articles_with_ai(articles):
             genre = r.get("genre") or ""
             region = r.get("region") or ""
             place = (r.get("place") or "").strip()
+            title_ja = (r.get("title_ja") or "").strip()
             summary = (r.get("summary_ja") or "").strip()
 
             # --- AIの返りを検証(不正なジャンル/地域は矯正 or 除外) ---
@@ -257,6 +290,7 @@ def enrich_articles_with_ai(articles):
                 "ai_genre": genre,
                 "ai_region": region,
                 "ai_place": place,
+                "ai_title_ja": title_ja or article.get("title", ""),
                 "ai_summary": summary,
             })
 
@@ -369,6 +403,26 @@ def geocode_place(place, cache):
         return None
 
 
+def jitter_duplicate_coords(lat, lng, occurrence_index):
+    """同じ地名(=同じ座標)の記事が複数あるとき、ピンが完全に重ならないよう
+    ひまわりの種状(黄金角スパイラル)にわずかにずらす。
+    都市代表点のジオコーディング自体が元々数百m〜数kmの誤差を持つため、
+    この程度のずらしは位置精度を実質的に悪化させるものではない。
+    """
+    if occurrence_index <= 0:
+        return lat, lng
+
+    angle_rad = math.radians(occurrence_index * GOLDEN_ANGLE_DEG)
+    radius = DUPLICATE_COORD_JITTER_DEGREES * math.sqrt(min(occurrence_index, 12))
+
+    lat_offset = radius * math.cos(angle_rad)
+    # 経度方向は緯度が高いほど同じ度数でも実距離が縮むため、cos(緯度)で補正する。
+    lng_scale = math.cos(math.radians(lat)) if abs(lat) < 89 else 1.0
+    lng_offset = (radius * math.sin(angle_rad)) / max(lng_scale, 0.01)
+
+    return lat + lat_offset, lng + lng_offset
+
+
 # ---------------------------------------------------------------------------
 # ⑤ JSON出力
 # ---------------------------------------------------------------------------
@@ -379,12 +433,18 @@ def _valid_http_url(url):
 def build_output(selected, cache):
     output = []
     next_id = 1
+    coord_seen_count = {}
 
     for a in selected:
         place = a["ai_place"]
         coords = geocode_place(place, cache)
         if not coords:
             continue  # 座標が取れなければピンにしない
+
+        place_key = normalize_place_key(place)
+        occurrence = coord_seen_count.get(place_key, 0)
+        coord_seen_count[place_key] = occurrence + 1
+        lat, lng = jitter_duplicate_coords(coords["lat"], coords["lng"], occurrence)
 
         genre = a["ai_genre"]
         color = GENRE_COLORS.get(genre, GENRE_COLORS["その他"])
@@ -393,13 +453,18 @@ def build_output(selected, cache):
         social_image = a.get("socialimage")
         image_url = social_image if _valid_http_url(social_image) else f"{PLACEHOLDER_IMAGE_BASE}/{next_id}/800/600"
 
+        original_title = a.get("title", "")
+        display_title = a.get("ai_title_ja") or original_title
+
         output.append({
             "id": next_id,
-            "location": {"lat": coords["lat"], "lng": coords["lng"], "name": place},
+            "location": {"lat": lat, "lng": lng, "name": place},
             "category": genre,
-            "title": a.get("title", ""),
+            "title": display_title,
+            "originalTitle": original_title,
             "aiSummary": a["ai_summary"],
             "aiSummaryIsHeadlineOnly": True,  # フロントで「見出しのみからのAI推測」と明示するためのフラグ
+            "publishedAt": a.get("published_at"),
             "url": a.get("url", ""),
             "color": color,
             "imageUrl": image_url,
@@ -421,7 +486,7 @@ def main():
         print("[ERROR] 記事が1件も取得できませんでした。ネットワークの状態を確認してください。")
         sys.exit(1)
 
-    print("=== ② AI要約・ジャンル・地名判定 (Groq) ===")
+    print("=== ② AI要約・ジャンル・地名判定・タイトル和訳 (Groq) ===")
     enriched = enrich_articles_with_ai(articles)
     if not enriched:
         print("[ERROR] AI判定を通過した記事が0件でした。config.pyのAI_MODELやプロンプトを確認してください。")
@@ -439,8 +504,11 @@ def main():
         save_geocode_cache(cache)
 
     print("=== ⑤ JSON出力 ===")
+    generated_at_dt = datetime.now(timezone.utc)
+    next_update_dt = generated_at_dt + timedelta(minutes=UPDATE_INTERVAL_MINUTES)
     payload = {
-        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "generated_at": generated_at_dt.isoformat().replace("+00:00", "Z"),
+        "next_update_at": next_update_dt.isoformat().replace("+00:00", "Z"),
         "count": len(output),
         "items": output,
     }
