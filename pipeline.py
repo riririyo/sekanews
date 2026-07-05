@@ -17,10 +17,10 @@ config.pyに書いてある限り常に地図に表示され続ける。
 """
 
 import difflib
-import hashlib
 import json
 import math
 import os
+import re
 import sys
 import time
 import traceback
@@ -59,6 +59,8 @@ from config import (
     NOMINATIM_USER_AGENT,
     OUTPUT_FILE,
     PLACEHOLDER_IMAGE_BASE,
+    REAL_IMAGE_FETCH_MAX_BYTES,
+    REAL_IMAGE_FETCH_TIMEOUT_SEC,
     REGION_QUOTAS,
     SENSITIVE_KEYWORDS,
     SPONSOR_PINS,
@@ -79,6 +81,14 @@ NEWS_REQUEST_HEADERS = {
 # 黄金角(度)。同じ座標に複数ピンが重なるとき、視覚的にきれいに散らすための
 # スパイラル配置に使う(向日葵の種の並びと同じ原理)。
 GOLDEN_ANGLE_DEG = 137.5077640500378
+
+# 記事ページのHTML内からog:image(SNSシェア用画像)のURLを抜き出すための正規表現。
+# <meta property="og:image" content="..."> と <meta content="..." property="og:image">
+# の両方の属性順に対応する(サイトによって順番が違うため)。
+_OG_IMAGE_PATTERNS = [
+    re.compile(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', re.IGNORECASE),
+    re.compile(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', re.IGNORECASE),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -513,6 +523,47 @@ def _valid_http_url(url):
     return isinstance(url, str) and (url.startswith("http://") or url.startswith("https://"))
 
 
+def fetch_real_article_image(url):
+    """記事ページ(Google Newsの中継URLの先)からog:image(実際の記事のSNSシェア画像)を
+    軽量に取得する。取得できなければNoneを返す(呼び出し側で「画像なし」として扱う)。
+    記事全文をダウンロードする必要はなく、通常<head>付近にog:imageがあるため、
+    REAL_IMAGE_FETCH_MAX_BYTESぶんだけ読んで打ち切ることで負荷・時間を抑えている。
+    失敗(タイムアウト・403・og:image無し等)は珍しくないため、静かにNoneを返すだけで
+    パイプライン全体は止めない。"""
+    if not _valid_http_url(url):
+        return None
+
+    try:
+        resp = requests.get(
+            url,
+            timeout=REAL_IMAGE_FETCH_TIMEOUT_SEC,
+            headers=NEWS_REQUEST_HEADERS,
+            allow_redirects=True,
+            stream=True,
+        )
+        if resp.status_code != 200:
+            resp.close()
+            return None
+
+        chunk = b""
+        for part in resp.iter_content(chunk_size=8192):
+            chunk += part
+            if len(chunk) >= REAL_IMAGE_FETCH_MAX_BYTES:
+                break
+        resp.close()
+
+        html = chunk.decode("utf-8", errors="ignore")
+        for pattern in _OG_IMAGE_PATTERNS:
+            m = pattern.search(html)
+            if m:
+                img_url = m.group(1).strip()
+                if _valid_http_url(img_url):
+                    return img_url
+        return None
+    except Exception:
+        return None
+
+
 def build_new_items(selected, cache):
     """今回新しく取得した記事を、座標付きの出力用アイテムに変換する
     (idはまだ振らない。前回分とマージした後にまとめて振り直す)。"""
@@ -535,14 +586,15 @@ def build_new_items(selected, cache):
         color = GENRE_COLORS.get(genre, GENRE_COLORS["その他"])
 
         url = a.get("url", "")
-        # Google News RSSには記事画像が含まれないため、基本的にプレースホルダー画像を使う。
-        # シードはURLのハッシュにして、マージを重ねても同じ記事の画像が変わらないようにする。
+        # まずRSS自体に画像があればそれを使う(通常は無い)。無ければ記事ページの
+        # og:image(実際の記事のSNSシェア画像)を軽量に取りに行く。それも取れなければ
+        # ランダムなプレースホルダーは出さず、画像なし(None)として扱う
+        # (記事と無関係な写真が表示されるのは誤解を招く、という指摘を受けての変更)。
         social_image = a.get("socialimage")
         if _valid_http_url(social_image):
             image_url = social_image
         else:
-            seed = hashlib.md5(url.encode("utf-8")).hexdigest()[:12] if url else str(len(items))
-            image_url = f"{PLACEHOLDER_IMAGE_BASE}/{seed}/800/600"
+            image_url = fetch_real_article_image(url)
 
         original_title = a.get("title", "")
         display_title = a.get("ai_title_ja") or original_title
