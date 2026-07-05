@@ -36,23 +36,24 @@ GROQ_REQUEST_DELAY_SEC = 1.2
 # 高負荷時に数分〜十数分ずれることがある)に備えて少し広め(75分)にしてある。
 GDELT_TIMESPAN = "75min"
 
-# 各地域につき「ノルマ数 × この倍率」件を候補として取得する(GDELT_MAX_RECORDS_CAPで頭打ち)。
-GDELT_MAX_RECORDS_PER_REGION = 3
-
 # GDELT DOC APIの1リクエストあたりの最大取得件数(API仕様上の上限)。
+# 実測で判明した重要な問題: GitHub Actionsの共有IPは既に他の無数のワークフローが
+# GDELTを叩いているらしく、リクエスト数が多いほど429(レート制限)に当たりやすい。
+# そのため「国ごとに細かくリクエストを分ける」のをやめ、後述のFETCH_GROUPSで
+# 数回の大きなリクエストにまとめてリクエスト総数そのものを減らす方針にしてある。
 GDELT_MAX_RECORDS_CAP = 250
 
-# GDELTへのリクエスト間隔(秒)。GitHub Actionsの共有IPからのアクセスは他のワークフローと
-# 混雑しやすく、1秒間隔だと429(レート制限)が頻発することが実測でわかったため、
-# かなり余裕を持たせてある。1時間に1回しか動かさないので多少待っても問題ない。
+# GDELTへのリクエスト間隔(秒)。
 GDELT_REQUEST_DELAY_SEC = 5.0
 
-# GDELT取得が失敗した場合のリトライ回数。待ち時間は 15s, 30s, 60s, 120s と指数的に伸びる
-# (GDELTの429は数秒待つ程度では解消しないことが多いため、長めに待ってから再試行する)。
-GDELT_MAX_RETRIES = 4
+# GDELT取得が失敗した場合のリトライ回数。待ち時間は 15s, 30s, 60s, 120s, 120s... と
+# 指数的に伸びて120秒で頭打ちにしてある(GDELTの429は数秒待つ程度では解消しないことが
+# 多いため長めに待つが、際限なく伸ばすとジョブが終わらなくなるので上限を設けている)。
+GDELT_MAX_RETRIES = 5
+GDELT_MAX_RETRY_WAIT_SEC = 120
 
 # 地域別クエリが軒並み429で失敗しても最低限の記事が確保できるよう、国コードで絞らない
-# 「全世界の英語ニュース」を先に1回まとめて取得しておく(地域はAIの判定(ai_region)で
+# 「全世界の英語ニュース」も1回まとめて取得しておく(地域はAIの判定(ai_region)で
 # 事後的に割り振られるので、地域選抜のロジックには影響しない)。
 GDELT_GLOBAL_POOL_MAX_RECORDS = 250
 
@@ -79,21 +80,56 @@ REGION_QUOTAS = {
     "オセアニア": 50,
 }
 
-# 各地域をGDELTから取得する際の絞り込み条件(sourcecountryはFIPS 10-4の2文字コード)。
-# 見た目の記事が偏っていると感じたら、ここの国コードを増減して調整する。
-REGION_QUERIES = {
+# ---------------------------------------------------------------------------
+# GDELTから記事を取ってくる際の「取得グループ」。
+# ---------------------------------------------------------------------------
+# 重要: 以前は上のREGION_QUOTASと同じ12分類でGDELTに1回ずつ(=12回)リクエストして
+# いたが、GitHub Actionsの共有IPからのアクセスは元々429(レート制限)に当たりやすく、
+# リクエスト回数が多いほど失敗が増えることが実測でわかった。
+# そこで「取得(何回GDELTを叩くか)」と「選抜(どの地域に何件割り当てるか)」を分離し、
+# 取得は下記の数個の大きなグループにまとめてリクエスト総数を減らす。どのグループの
+# 記事も、実際の地域振り分けはAIの判定(ai_region)で行われる(上のREGION_QUOTASの
+# 12分類に従う)ので、ここのグループ分けは「何をまとめて1回のリクエストにするか」
+# だけの都合であり、REGION_QUOTASのキーと一致している必要はない。
+# 各グループにはできるだけ多くの国コードを詰め込むことで、南アフリカだけでなく
+# ザンビアやジンバブエ、ブラジルだけでなくボリビアやエクアドルなど、あまり報道され
+# ない国のニュースも拾える確率を上げている(FIPS 10-4コードはうろ覚えの部分もあるので、
+# 狙った国が全然出てこない場合はここのコードを見直すとよい)。
+FETCH_GROUPS = {
     "日本": "sourcecountry:JA",
-    "東アジア": "sourcecountry:CH OR sourcecountry:KS OR sourcecountry:TW OR sourcecountry:KN",
-    "東南アジア": "sourcecountry:ID OR sourcecountry:TH OR sourcecountry:VM OR sourcecountry:RP OR sourcecountry:MY OR sourcecountry:SN",
-    "南アジア": "sourcecountry:IN OR sourcecountry:PK OR sourcecountry:BG OR sourcecountry:CE",
-    "中東": "sourcecountry:SA OR sourcecountry:IR OR sourcecountry:IZ OR sourcecountry:IS OR sourcecountry:TU OR sourcecountry:JO",
-    "アフリカ北部": "sourcecountry:EG OR sourcecountry:LY OR sourcecountry:AG OR sourcecountry:MO OR sourcecountry:TS",
-    "アフリカ南部・東部": "sourcecountry:SF OR sourcecountry:KE OR sourcecountry:ET OR sourcecountry:TZ OR sourcecountry:UG OR sourcecountry:NI",
-    "西欧": "sourcecountry:UK OR sourcecountry:FR OR sourcecountry:GM OR sourcecountry:IT OR sourcecountry:SP OR sourcecountry:NL OR sourcecountry:BE",
-    "東欧・ロシア": "sourcecountry:RS OR sourcecountry:PL OR sourcecountry:UP OR sourcecountry:RO",
-    "北米": "sourcecountry:US OR sourcecountry:CA OR sourcecountry:MX",
-    "中南米": "sourcecountry:BR OR sourcecountry:AR OR sourcecountry:CI OR sourcecountry:CO OR sourcecountry:PE OR sourcecountry:VE",
-    "オセアニア": "sourcecountry:AS OR sourcecountry:NZ",
+    "アジア(東・東南・南)": (
+        "sourcecountry:CH OR sourcecountry:KS OR sourcecountry:TW OR sourcecountry:KN OR "
+        "sourcecountry:MG OR sourcecountry:ID OR sourcecountry:TH OR sourcecountry:VM OR "
+        "sourcecountry:RP OR sourcecountry:MY OR sourcecountry:SN OR sourcecountry:CB OR "
+        "sourcecountry:LA OR sourcecountry:BM OR sourcecountry:IN OR sourcecountry:PK OR "
+        "sourcecountry:BG OR sourcecountry:CE OR sourcecountry:NP OR sourcecountry:BT"
+    ),
+    "中東・アフリカ": (
+        "sourcecountry:SA OR sourcecountry:IR OR sourcecountry:IZ OR sourcecountry:IS OR "
+        "sourcecountry:TU OR sourcecountry:JO OR sourcecountry:LE OR sourcecountry:SY OR "
+        "sourcecountry:YM OR sourcecountry:KU OR sourcecountry:EG OR sourcecountry:LY OR "
+        "sourcecountry:AG OR sourcecountry:MO OR sourcecountry:TS OR sourcecountry:SF OR "
+        "sourcecountry:KE OR sourcecountry:ET OR sourcecountry:TZ OR sourcecountry:UG OR "
+        "sourcecountry:NI OR sourcecountry:ZA OR sourcecountry:ZI OR sourcecountry:MZ OR "
+        "sourcecountry:RW OR sourcecountry:SO OR sourcecountry:MA OR sourcecountry:GH OR "
+        "sourcecountry:CM OR sourcecountry:SG OR sourcecountry:IV OR sourcecountry:BC OR "
+        "sourcecountry:WA"
+    ),
+    "欧州": (
+        "sourcecountry:UK OR sourcecountry:FR OR sourcecountry:GM OR sourcecountry:IT OR "
+        "sourcecountry:SP OR sourcecountry:NL OR sourcecountry:BE OR sourcecountry:RS OR "
+        "sourcecountry:PL OR sourcecountry:UP OR sourcecountry:RO OR sourcecountry:SW OR "
+        "sourcecountry:SZ OR sourcecountry:AU OR sourcecountry:GR OR sourcecountry:PO OR "
+        "sourcecountry:HU OR sourcecountry:DA OR sourcecountry:NO OR sourcecountry:FI OR "
+        "sourcecountry:IC OR sourcecountry:EI"
+    ),
+    "南北アメリカ・オセアニア": (
+        "sourcecountry:US OR sourcecountry:CA OR sourcecountry:MX OR sourcecountry:BR OR "
+        "sourcecountry:AR OR sourcecountry:CI OR sourcecountry:CO OR sourcecountry:PE OR "
+        "sourcecountry:VE OR sourcecountry:BL OR sourcecountry:EC OR sourcecountry:UY OR "
+        "sourcecountry:PM OR sourcecountry:GT OR sourcecountry:CU OR sourcecountry:DR OR "
+        "sourcecountry:AS OR sourcecountry:NZ"
+    ),
 }
 
 # ---------------------------------------------------------------------------
