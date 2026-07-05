@@ -3,7 +3,8 @@
 pipeline.py
 ===========
 ① ニュース取得(Google News RSS) → ② AI要約・ジャンル・地名判定・タイトル和訳(Groq)
-→ ③ 重複除去・地域ノルマで選抜 → ④ 座標変換(Nominatim) → ⑤ 前回分とマージしてnews_data.json出力
+→ ③ 重複除去・地域ノルマで選抜 → ④ 座標変換(Nominatim) → ⑤ 前回分・スポンサーピンと
+マージしてnews_data.json出力
 
 設定はすべて config.py にまとめてあるので、挙動を変えたいときはそちらを編集する。
 
@@ -11,7 +12,8 @@ pipeline.py
 記事(new_items)と、前回までに集めて有効期限内の記事(kept_previous)をマージして
 出力するため、1時間ごとの取得件数が少ない時間帯でも、地図全体としては常にMAX_PINS_TOTALに
 近いピンが世界中に散らばっている状態を保てる。ITEM_MAX_AGE_HOURSを過ぎた記事は自動的に
-地図から消える。
+地図から消える。スポンサーピン(SPONSOR_PINS)はこの蓄積・期限管理の対象外で、
+config.pyに書いてある限り常に地図に表示され続ける。
 """
 
 import difflib
@@ -48,11 +50,14 @@ from config import (
     NEWS_REQUEST_DELAY_SEC,
     NEWS_REQUEST_TIMEOUT_SEC,
     NEWS_RSS_URL_TEMPLATE,
+    NOMINATIM_ACCEPT_LANGUAGE,
     NOMINATIM_DELAY_SEC,
     NOMINATIM_USER_AGENT,
     OUTPUT_FILE,
     PLACEHOLDER_IMAGE_BASE,
     REGION_QUOTAS,
+    SENSITIVE_KEYWORDS,
+    SPONSOR_PINS,
     UPDATE_INTERVAL_MINUTES,
     VALID_GENRES,
 )
@@ -190,11 +195,18 @@ def _build_prompt(batch):
         "各記事について、以下を判定してください。\n"
         f"1. genre: 次のいずれか一つ -> {genre_list}\n"
         f"2. region: 次のいずれか一つ -> {region_list}\n"
-        "3. place: 地図でジオコーディングできる具体的な地名(できれば都市名。"
-        "見出しに区・駅・施設名など都市より細かい地名があればそちらを優先すること)。"
-        "国名しか分からない場合は国名でもよい。英語の一般的な地名表記で統一すること"
-        "(例: '東京' ではなく 'Tokyo, Japan'、'ニューヨーク' ではなく 'New York, USA')。"
-        "タイトルから具体的な場所が全く読み取れない場合は空文字\"\"。\n"
+        "3. place: 見出しの内容が実際に起きた/関係する場所として、地図でジオコーディング"
+        "できる具体的な地名(できれば都市名。見出しに区・駅・施設名など都市より細かい"
+        "地名があればそちらを優先すること)。その国全体の選挙・政策・災害など国名レベルの"
+        "出来事なら国名でもよい。英語の一般的な地名表記で統一すること"
+        "(例: '東京' ではなく 'Tokyo, Japan'、'ニューヨーク' ではなく 'New York, USA')。\n"
+        "   重要: 各記事に付いている「参考国ヒント」は、そのニュースをどの国のRSS"
+        "フィードから取得したかを示すだけで、記事の内容の発生場所ではない。見出し自体に"
+        "地名・国名を示す語が含まれていない限り、参考国ヒントをそのままplaceに使っては"
+        "いけない。健康・科学・生活の知恵・一般的なノウハウ・人物の日常的な話題など、"
+        "特定の場所と結びつかない見出しは、どの国のフィードから来ていてもplaceを空文字"
+        "\"\"にすること。タイトルから具体的な場所が全く読み取れない場合は例外なく空文字"
+        "\"\"とすること。\n"
         "4. title_ja: 見出しを自然な日本語に翻訳したもの。要約ではなく翻訳なので、"
         "見出しの情報を削らずに日本語にすること。見出しが既に日本語の場合はそのまま"
         "(表記の乱れがあれば軽く整える程度でよい)。\n"
@@ -255,9 +267,21 @@ def call_groq_batch(batch):
     raise RuntimeError(f"Groq呼び出しが{AI_MAX_RETRIES + 1}回とも失敗: {last_err}")
 
 
+def _is_sensitive_title(title):
+    """見出しに配慮が必要なキーワードが含まれていないか簡易チェックする。"""
+    if not title:
+        return False
+    normalized = unicodedata.normalize("NFKC", title).casefold()
+    for kw in SENSITIVE_KEYWORDS:
+        if unicodedata.normalize("NFKC", kw).casefold() in normalized:
+            return True
+    return False
+
+
 def enrich_articles_with_ai(articles):
     enriched = []
     total_batches = (len(articles) + ARTICLES_PER_AI_BATCH - 1) // ARTICLES_PER_AI_BATCH
+    blocked_sensitive = 0
 
     for b in range(total_batches):
         start = b * ARTICLES_PER_AI_BATCH
@@ -276,6 +300,10 @@ def enrich_articles_with_ai(articles):
             if not isinstance(idx, int) or not (0 <= idx < len(batch)):
                 continue
             article = batch[idx]
+
+            if _is_sensitive_title(article.get("title", "")):
+                blocked_sensitive += 1
+                continue
 
             genre = r.get("genre") or ""
             region = r.get("region") or ""
@@ -304,6 +332,8 @@ def enrich_articles_with_ai(articles):
 
         time.sleep(GROQ_REQUEST_DELAY_SEC)
 
+    if blocked_sensitive:
+        print(f"  [FILTER] センシティブな見出しのためピン化を見送り: {blocked_sensitive}件")
     print(f"  [AI] 判定OK: {len(enriched)}件")
     return enriched
 
@@ -382,7 +412,12 @@ def geocode_place(place, cache):
         return cache[key]
 
     url = "https://nominatim.openstreetmap.org/search"
-    params = {"q": place, "format": "json", "limit": 1}
+    params = {
+        "q": place,
+        "format": "json",
+        "limit": 1,
+        "accept-language": NOMINATIM_ACCEPT_LANGUAGE,
+    }
     headers = {"User-Agent": NOMINATIM_USER_AGENT}
 
     try:
@@ -425,7 +460,7 @@ def jitter_duplicate_coords(lat, lng, occurrence_index):
 
 
 # ---------------------------------------------------------------------------
-# ⑤ 座標付与 + 前回分とのマージ + JSON出力
+# ⑤ 座標付与 + 前回分・スポンサーピンとのマージ + JSON出力
 # ---------------------------------------------------------------------------
 def _valid_http_url(url):
     return isinstance(url, str) and (url.startswith("http://") or url.startswith("https://"))
@@ -470,6 +505,7 @@ def build_new_items(selected, cache):
             "category": genre,
             "title": display_title,
             "originalTitle": original_title,
+            "sourceName": a.get("domain", ""),
             "aiSummary": a["ai_summary"],
             "aiSummaryIsHeadlineOnly": True,  # フロントで「見出しのみからのAI推測」と明示するためのフラグ
             "publishedAt": a.get("published_at"),
@@ -477,15 +513,49 @@ def build_new_items(selected, cache):
             "url": url,
             "color": color,
             "imageUrl": image_url,
+            "isSponsored": False,
         })
 
+    return items
+
+
+def build_sponsor_items(now_iso):
+    """config.py の SPONSOR_PINS を出力用アイテムに変換する。
+    ニュースのように期限切れで消えることはなく、毎回config.pyの内容がそのまま
+    反映される(前回分の蓄積とは無関係に、常に最新のSPONSOR_PINSを使う)。"""
+    items = []
+    for idx, s in enumerate(SPONSOR_PINS):
+        lat = s.get("lat")
+        lng = s.get("lng")
+        if lat is None or lng is None:
+            print(f"  [WARN] SPONSOR_PINS[{idx}]に lat/lng が無いためスキップします")
+            continue
+        name = s.get("name", "広告")
+        url = s.get("url", "#")
+        image_url = s.get("imageUrl") or f"{PLACEHOLDER_IMAGE_BASE}/sponsor{idx}/800/600"
+        items.append({
+            "location": {"lat": lat, "lng": lng, "name": s.get("place", "")},
+            "category": "PR",
+            "title": name,
+            "originalTitle": name,
+            "sourceName": "",
+            "aiSummary": s.get("message", ""),
+            "aiSummaryIsHeadlineOnly": False,
+            "publishedAt": None,
+            "firstSeenAt": now_iso,
+            "url": url,
+            "color": s.get("color", "#eab308"),
+            "imageUrl": image_url,
+            "isSponsored": True,
+        })
     return items
 
 
 def load_previous_items():
     """前回までのnews_data.json(gh-pagesから復元されたもの)を読み込む。
     存在しない/壊れている場合は空リストを返す(蓄積無しで今回分のみになるだけで、
-    処理自体は継続できる)。"""
+    処理自体は継続できる)。スポンサーピンは毎回config.pyから作り直すため、
+    ここでは除外して返す(でないと期限管理の対象になってしまう/二重に増え続ける)。"""
     if not os.path.exists(OUTPUT_FILE):
         return [], None
     try:
@@ -494,6 +564,7 @@ def load_previous_items():
         items = data.get("items", [])
         if not isinstance(items, list):
             return [], None
+        items = [it for it in items if not it.get("isSponsored")]
         return items, data.get("generated_at")
     except Exception as e:
         print(f"  [WARN] 既存{OUTPUT_FILE}の読み込みに失敗、今回の新規分のみで出力します: {e}")
@@ -525,7 +596,8 @@ def _effective_timestamp(item, fallback_iso):
 
 
 def merge_with_previous(new_items, previous_items, previous_generated_at, now_dt):
-    """今回の新規記事と、前回までの有効期限内の記事をマージする。
+    """今回の新規記事と、前回までの有効期限内の記事をマージする(スポンサーピンは
+    別途build_sponsor_itemsで扱うため、ここにはニュース記事のみが渡ってくる)。
     これにより、1回の実行で集まる記事が少ない時間帯でも、地図全体としては
     常にMAX_PINS_TOTALに近いピンが世界中に散らばっている状態を保てる。"""
     max_age = timedelta(hours=ITEM_MAX_AGE_HOURS)
@@ -546,6 +618,8 @@ def merge_with_previous(new_items, previous_items, previous_generated_at, now_dt
         # 旧スキーマ(タイトル和訳/公開日時導入前)のデータでも壊れないよう補完する。
         it.setdefault("originalTitle", it.get("title", ""))
         it.setdefault("aiSummaryIsHeadlineOnly", True)
+        it.setdefault("sourceName", "")
+        it.setdefault("isSponsored", False)
         it["firstSeenAt"] = eff_ts.isoformat().replace("+00:00", "Z")
         kept_previous.append(it)
 
@@ -556,14 +630,6 @@ def merge_with_previous(new_items, previous_items, previous_generated_at, now_dt
     combined = dedup_similar_titles(combined)
 
     combined.sort(key=lambda it: _effective_timestamp(it, previous_generated_at), reverse=True)
-    if len(combined) > MAX_PINS_TOTAL:
-        dropped = len(combined) - MAX_PINS_TOTAL
-        print(f"  [MERGE] 合計{len(combined)}件が上限{MAX_PINS_TOTAL}件を超えたため、最も古い{dropped}件を除外")
-        combined = combined[:MAX_PINS_TOTAL]
-
-    for idx, it in enumerate(combined, start=1):
-        it["id"] = idx
-
     return combined
 
 
@@ -596,21 +662,42 @@ def main():
         # 途中で失敗しても、そこまでに得たジオコーディング結果は必ずキャッシュに残す。
         save_geocode_cache(cache)
 
-    print("=== ⑤ 前回分とマージしてJSON出力 ===")
+    print("=== ⑤ 前回分・スポンサーピンとマージしてJSON出力 ===")
     previous_items, previous_generated_at = load_previous_items()
     now_dt = datetime.now(timezone.utc)
+    now_iso = now_dt.isoformat().replace("+00:00", "Z")
     merged = merge_with_previous(new_items, previous_items, previous_generated_at, now_dt)
+
+    sponsor_items = build_sponsor_items(now_iso)
+    if sponsor_items:
+        room = max(MAX_PINS_TOTAL - len(sponsor_items), 0)
+        if len(merged) > room:
+            dropped = len(merged) - room
+            print(f"  [MERGE] スポンサーピン{len(sponsor_items)}件分の枠を確保するため、"
+                  f"最も古い{dropped}件を追加で除外")
+        merged = merged[:room]
+        final_items = sponsor_items + merged
+        print(f"  [MERGE] スポンサーピン: {len(sponsor_items)}件")
+    else:
+        if len(merged) > MAX_PINS_TOTAL:
+            dropped = len(merged) - MAX_PINS_TOTAL
+            print(f"  [MERGE] 合計{len(merged)}件が上限{MAX_PINS_TOTAL}件を超えたため、最も古い{dropped}件を除外")
+            merged = merged[:MAX_PINS_TOTAL]
+        final_items = merged
+
+    for idx, it in enumerate(final_items, start=1):
+        it["id"] = idx
 
     next_update_dt = now_dt + timedelta(minutes=UPDATE_INTERVAL_MINUTES)
     payload = {
-        "generated_at": now_dt.isoformat().replace("+00:00", "Z"),
+        "generated_at": now_iso,
         "next_update_at": next_update_dt.isoformat().replace("+00:00", "Z"),
-        "count": len(merged),
-        "items": merged,
+        "count": len(final_items),
+        "items": final_items,
     }
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-    print(f"  {OUTPUT_FILE} に {len(merged)}件 書き出し完了(新規{len(new_items)}件を含む)")
+    print(f"  {OUTPUT_FILE} に {len(final_items)}件 書き出し完了(新規{len(new_items)}件を含む)")
 
 
 if __name__ == "__main__":
