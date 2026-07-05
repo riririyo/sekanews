@@ -3,12 +3,19 @@
 pipeline.py
 ===========
 ① ニュース取得(Google News RSS) → ② AI要約・ジャンル・地名判定・タイトル和訳(Groq)
-→ ③ 重複除去・地域ノルマで選抜 → ④ 座標変換(Nominatim) → ⑤ news_data.json 出力
+→ ③ 重複除去・地域ノルマで選抜 → ④ 座標変換(Nominatim) → ⑤ 前回分とマージしてnews_data.json出力
 
 設定はすべて config.py にまとめてあるので、挙動を変えたいときはそちらを編集する。
+
+重要な設計変更(蓄積方式): 1回の実行で必ず1000件集める必要はない。今回新しく取得できた
+記事(new_items)と、前回までに集めて有効期限内の記事(kept_previous)をマージして
+出力するため、1時間ごとの取得件数が少ない時間帯でも、地図全体としては常にMAX_PINS_TOTALに
+近いピンが世界中に散らばっている状態を保てる。ITEM_MAX_AGE_HOURSを過ぎた記事は自動的に
+地図から消える。
 """
 
 import difflib
+import hashlib
 import json
 import math
 import os
@@ -32,6 +39,7 @@ from config import (
     GEOCODE_CACHE_FILE,
     GROQ_API_KEY,
     GROQ_REQUEST_DELAY_SEC,
+    ITEM_MAX_AGE_HOURS,
     MAX_PINS_TOTAL,
     NEWS_COUNTRIES,
     NEWS_MAX_ITEMS_PER_COUNTRY,
@@ -304,7 +312,7 @@ def enrich_articles_with_ai(articles):
 # ③ 重複除去 + 地域ノルマで選抜
 # ---------------------------------------------------------------------------
 def dedup_similar_titles(items):
-    """同じ出来事を報じた似たタイトルの記事を弾く(O(n^2)だが選抜後の件数=最大MAX_PINS_TOTALなので許容範囲)。"""
+    """同じ出来事を報じた似たタイトルの記事を弾く。"""
     kept = []
     kept_titles = []
     removed = 0
@@ -339,15 +347,8 @@ def select_by_region_quota(enriched):
         selected.extend(picked)
         print(f"  [SELECT] {region}: {len(picked)}/{quota}件")
 
-    if len(selected) < MAX_PINS_TOTAL:
-        selected_urls = {a.get("url") for a in selected}
-        leftovers = [a for a in enriched if a.get("url") not in selected_urls]
-        need = MAX_PINS_TOTAL - len(selected)
-        selected.extend(leftovers[:need])
-
     selected = dedup_similar_titles(selected)
-    selected = selected[:MAX_PINS_TOTAL]
-    print(f"  [SELECT] 最終選抜: {len(selected)}件 (上限{MAX_PINS_TOTAL})")
+    print(f"  [SELECT] 今回の新規選抜: {len(selected)}件")
     return selected
 
 
@@ -424,16 +425,18 @@ def jitter_duplicate_coords(lat, lng, occurrence_index):
 
 
 # ---------------------------------------------------------------------------
-# ⑤ JSON出力
+# ⑤ 座標付与 + 前回分とのマージ + JSON出力
 # ---------------------------------------------------------------------------
 def _valid_http_url(url):
     return isinstance(url, str) and (url.startswith("http://") or url.startswith("https://"))
 
 
-def build_output(selected, cache):
-    output = []
-    next_id = 1
+def build_new_items(selected, cache):
+    """今回新しく取得した記事を、座標付きの出力用アイテムに変換する
+    (idはまだ振らない。前回分とマージした後にまとめて振り直す)。"""
+    items = []
     coord_seen_count = {}
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     for a in selected:
         place = a["ai_place"]
@@ -449,15 +452,20 @@ def build_output(selected, cache):
         genre = a["ai_genre"]
         color = GENRE_COLORS.get(genre, GENRE_COLORS["その他"])
 
+        url = a.get("url", "")
         # Google News RSSには記事画像が含まれないため、基本的にプレースホルダー画像を使う。
+        # シードはURLのハッシュにして、マージを重ねても同じ記事の画像が変わらないようにする。
         social_image = a.get("socialimage")
-        image_url = social_image if _valid_http_url(social_image) else f"{PLACEHOLDER_IMAGE_BASE}/{next_id}/800/600"
+        if _valid_http_url(social_image):
+            image_url = social_image
+        else:
+            seed = hashlib.md5(url.encode("utf-8")).hexdigest()[:12] if url else str(len(items))
+            image_url = f"{PLACEHOLDER_IMAGE_BASE}/{seed}/800/600"
 
         original_title = a.get("title", "")
         display_title = a.get("ai_title_ja") or original_title
 
-        output.append({
-            "id": next_id,
+        items.append({
             "location": {"lat": lat, "lng": lng, "name": place},
             "category": genre,
             "title": display_title,
@@ -465,13 +473,98 @@ def build_output(selected, cache):
             "aiSummary": a["ai_summary"],
             "aiSummaryIsHeadlineOnly": True,  # フロントで「見出しのみからのAI推測」と明示するためのフラグ
             "publishedAt": a.get("published_at"),
-            "url": a.get("url", ""),
+            "firstSeenAt": now_iso,  # このパイプラインが初めてこの記事を捉えた時刻
+            "url": url,
             "color": color,
             "imageUrl": image_url,
         })
-        next_id += 1
 
-    return output
+    return items
+
+
+def load_previous_items():
+    """前回までのnews_data.json(gh-pagesから復元されたもの)を読み込む。
+    存在しない/壊れている場合は空リストを返す(蓄積無しで今回分のみになるだけで、
+    処理自体は継続できる)。"""
+    if not os.path.exists(OUTPUT_FILE):
+        return [], None
+    try:
+        with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        items = data.get("items", [])
+        if not isinstance(items, list):
+            return [], None
+        return items, data.get("generated_at")
+    except Exception as e:
+        print(f"  [WARN] 既存{OUTPUT_FILE}の読み込みに失敗、今回の新規分のみで出力します: {e}")
+        return [], None
+
+
+def _parse_iso(value):
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _effective_timestamp(item, fallback_iso):
+    """記事の「実質的な時刻」を求める。firstSeenAt→publishedAtの順に見て、
+    どちらも無ければ(旧スキームのデータ等)前回実行のgenerated_atを使う。
+    それも無ければ現在時刻(=最新扱い)。"""
+    for key in ("firstSeenAt", "publishedAt"):
+        dt = _parse_iso(item.get(key))
+        if dt:
+            return dt
+    dt = _parse_iso(fallback_iso)
+    return dt or datetime.now(timezone.utc)
+
+
+def merge_with_previous(new_items, previous_items, previous_generated_at, now_dt):
+    """今回の新規記事と、前回までの有効期限内の記事をマージする。
+    これにより、1回の実行で集まる記事が少ない時間帯でも、地図全体としては
+    常にMAX_PINS_TOTALに近いピンが世界中に散らばっている状態を保てる。"""
+    max_age = timedelta(hours=ITEM_MAX_AGE_HOURS)
+    new_urls = {it.get("url") for it in new_items if it.get("url")}
+
+    kept_previous = []
+    expired = 0
+    for it in previous_items:
+        url = it.get("url")
+        if url and url in new_urls:
+            continue  # 同じ記事は今回取得した新しい方を使う
+
+        eff_ts = _effective_timestamp(it, previous_generated_at)
+        if now_dt - eff_ts > max_age:
+            expired += 1
+            continue
+
+        # 旧スキーマ(タイトル和訳/公開日時導入前)のデータでも壊れないよう補完する。
+        it.setdefault("originalTitle", it.get("title", ""))
+        it.setdefault("aiSummaryIsHeadlineOnly", True)
+        it["firstSeenAt"] = eff_ts.isoformat().replace("+00:00", "Z")
+        kept_previous.append(it)
+
+    print(f"  [MERGE] 前回までのピンのうち有効期限切れ({ITEM_MAX_AGE_HOURS}時間超)で除外: {expired}件")
+    print(f"  [MERGE] 継続ピン: {len(kept_previous)}件 + 新規ピン: {len(new_items)}件")
+
+    combined = new_items + kept_previous
+    combined = dedup_similar_titles(combined)
+
+    combined.sort(key=lambda it: _effective_timestamp(it, previous_generated_at), reverse=True)
+    if len(combined) > MAX_PINS_TOTAL:
+        dropped = len(combined) - MAX_PINS_TOTAL
+        print(f"  [MERGE] 合計{len(combined)}件が上限{MAX_PINS_TOTAL}件を超えたため、最も古い{dropped}件を除外")
+        combined = combined[:MAX_PINS_TOTAL]
+
+    for idx, it in enumerate(combined, start=1):
+        it["id"] = idx
+
+    return combined
 
 
 def main():
@@ -498,23 +591,26 @@ def main():
     print("=== ④ 座標変換 (Nominatim) ===")
     cache = load_geocode_cache()
     try:
-        output = build_output(selected, cache)
+        new_items = build_new_items(selected, cache)
     finally:
         # 途中で失敗しても、そこまでに得たジオコーディング結果は必ずキャッシュに残す。
         save_geocode_cache(cache)
 
-    print("=== ⑤ JSON出力 ===")
-    generated_at_dt = datetime.now(timezone.utc)
-    next_update_dt = generated_at_dt + timedelta(minutes=UPDATE_INTERVAL_MINUTES)
+    print("=== ⑤ 前回分とマージしてJSON出力 ===")
+    previous_items, previous_generated_at = load_previous_items()
+    now_dt = datetime.now(timezone.utc)
+    merged = merge_with_previous(new_items, previous_items, previous_generated_at, now_dt)
+
+    next_update_dt = now_dt + timedelta(minutes=UPDATE_INTERVAL_MINUTES)
     payload = {
-        "generated_at": generated_at_dt.isoformat().replace("+00:00", "Z"),
+        "generated_at": now_dt.isoformat().replace("+00:00", "Z"),
         "next_update_at": next_update_dt.isoformat().replace("+00:00", "Z"),
-        "count": len(output),
-        "items": output,
+        "count": len(merged),
+        "items": merged,
     }
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-    print(f"  {OUTPUT_FILE} に {len(output)}件 書き出し完了")
+    print(f"  {OUTPUT_FILE} に {len(merged)}件 書き出し完了(新規{len(new_items)}件を含む)")
 
 
 if __name__ == "__main__":
