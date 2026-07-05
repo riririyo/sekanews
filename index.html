@@ -170,6 +170,24 @@
         }
         .dark #last-updated { background: rgba(31,41,55,0.85); color: #9ca3af; }
 
+        #footer-links {
+            position: absolute;
+            bottom: 6px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 900;
+            font-size: 10px;
+            color: #9ca3af;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            pointer-events: auto;
+        }
+        #footer-links a { color: inherit; text-decoration: underline; }
+        #footer-links a.advertise-link { color: #d97706; font-weight: 700; text-decoration: none; }
+        .dark #footer-links { color: #6b7280; }
+        .dark #footer-links a.advertise-link { color: #fbbf24; }
+
         #loading-overlay {
             position: absolute;
             inset: 0;
@@ -275,6 +293,12 @@
 
     <!-- 最終更新時刻・次回更新予定 -->
     <div id="last-updated"></div>
+
+    <!-- 利用規約・広告についての足元リンク -->
+    <div id="footer-links">
+        <a href="info.html#terms" target="_blank" rel="noopener noreferrer">利用規約・プライバシー</a>
+        <a href="info.html#advertise" target="_blank" rel="noopener noreferrer" class="advertise-link">📢 広告掲載受付中</a>
+    </div>
 
     <!-- エリア内のニュースを見るボタン -->
     <button id="area-news-btn" onclick="openAreaNewsList()" class="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-[1000] bg-gray-900 text-white px-6 py-3 rounded-full shadow-xl font-bold flex items-center gap-2 hover:bg-gray-800 hover:scale-105 transition-all duration-200">
