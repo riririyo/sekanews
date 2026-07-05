@@ -339,6 +339,12 @@ REAL_IMAGE_FETCH_TIMEOUT_SEC = 4
 # なく、通常<head>タグ内(ページ先頭付近)にog:imageがあるため、これで十分間に合う。
 REAL_IMAGE_FETCH_MAX_BYTES = 65536
 
+# og:image取得を何件同時並列で行うか。Nominatimジオコーディングと違い、取得先は
+# 記事ごとに別々のニュースサイトなので並列化してもポリシー上の問題になりにくい。
+# 新規記事が多い回でも、逐次実行で合計時間が伸びすぎてパイプライン全体が
+# 60分(cronの実行間隔)を超えないようにするための対策。
+REAL_IMAGE_FETCH_MAX_WORKERS = 10
+
 # 自動更新の実行間隔(分)。.github/workflows/update.yml のcron設定(現在は毎時0分=60分間隔)
 # と必ず合わせること。フロント側で「次回更新予定」を計算するために news_data.json に
 # 埋め込む next_update_at の算出に使う。
