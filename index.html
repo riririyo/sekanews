@@ -12,8 +12,22 @@
     <meta property="og:type" content="website">
     <meta name="twitter:card" content="summary">
 
+    <!-- ダークモードの初期適用(画面のちらつき防止のため、Tailwind読み込みより前に実行) -->
+    <script>
+        (function () {
+            try {
+                if (localStorage.getItem('sekanews_theme') === 'dark') {
+                    document.documentElement.classList.add('dark');
+                }
+            } catch (e) { /* localStorage無効環境は無視 */ }
+        })();
+    </script>
+
     <!-- Tailwind CSS (スタイリング用) -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' };
+    </script>
 
     <!-- Leaflet CSS (地図ライブラリ) -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
@@ -54,6 +68,12 @@
             outline: none;
         }
 
+        .spike-ring { animation: spike-pulse 1.6s ease-in-out infinite; }
+        @keyframes spike-pulse {
+            0%, 100% { filter: drop-shadow(0 0 0px rgba(220,38,38,0.7)); }
+            50% { filter: drop-shadow(0 0 7px rgba(220,38,38,0.95)); }
+        }
+
         .overlay-ui {
             position: absolute;
             top: 20px;
@@ -72,9 +92,10 @@
             background-color: rgba(255, 255, 255, 0.98);
             box-shadow: 0 0 30px rgba(0, 0, 0, 0.2);
             z-index: 2000;
-            transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+            transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.2s;
             overflow-y: auto;
         }
+        .dark #sidebar-panel { background-color: rgba(17, 24, 39, 0.98); }
         #sidebar-panel.left-side { left: 0; transform: translateX(-110%); }
         #sidebar-panel.left-side.sidebar-visible { transform: translateX(0); }
         #sidebar-panel.right-side { right: 0; transform: translateX(110%); }
@@ -97,6 +118,8 @@
         .close-button:hover, .close-button:focus-visible {
             background: rgba(0, 0, 0, 0.1);
         }
+        .dark .close-button { background: rgba(255, 255, 255, 0.08); color: #e5e7eb; }
+        .dark .close-button:hover, .dark .close-button:focus-visible { background: rgba(255, 255, 255, 0.16); }
 
         .rich-tooltip {
             background: white !important;
@@ -109,6 +132,7 @@
             color: #1f2937;
         }
         .rich-tooltip::before { display: none; }
+        .dark .rich-tooltip { background: #1f2937 !important; color: #f3f4f6; }
 
         #status-banner {
             position: absolute;
@@ -128,6 +152,8 @@
             background: rgba(255, 251, 235, 0.95);
             font-weight: 700;
         }
+        .dark #status-banner { background: rgba(31,41,55,0.92); color: #d1d5db; }
+        .dark #status-banner.stale { background: rgba(120,53,15,0.35); color: #fbbf24; }
 
         #last-updated {
             position: absolute;
@@ -142,6 +168,7 @@
             display: none;
             line-height: 1.5;
         }
+        .dark #last-updated { background: rgba(31,41,55,0.85); color: #9ca3af; }
 
         #loading-overlay {
             position: absolute;
@@ -155,6 +182,7 @@
             color: #4b5563;
             gap: 10px;
         }
+        .dark #loading-overlay { background: rgba(17,24,39,0.9); color: #e5e7eb; }
         .spinner {
             width: 20px; height: 20px;
             border: 3px solid #d1d5db;
@@ -173,26 +201,63 @@
             white-space: nowrap;
             border: 0;
         }
+
+        .pin-toast {
+            position: fixed;
+            top: 92px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #111827;
+            color: white;
+            padding: 8px 18px;
+            border-radius: 9999px;
+            font-size: 12px;
+            font-weight: 700;
+            z-index: 3000;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.25);
+            opacity: 0;
+            transition: opacity 0.4s ease;
+            pointer-events: none;
+        }
     </style>
 </head>
-<body class="bg-gray-100 overflow-hidden relative">
+<body class="bg-gray-100 dark:bg-gray-900 overflow-hidden relative">
 
     <!-- ヘッダーUI -->
-    <div class="overlay-ui w-[90%] max-w-2xl">
-        <div class="bg-white/90 backdrop-blur-md rounded-2xl shadow-lg p-4 flex flex-col md:flex-row items-center justify-between border border-gray-200">
-            <div class="flex items-center gap-3 mb-3 md:mb-0">
-                <div class="bg-black text-white p-2 rounded-lg">
-                    <i class="ph ph-globe-hemisphere-west text-2xl"></i>
+    <div class="overlay-ui w-[92%] max-w-2xl">
+        <div class="bg-white/90 dark:bg-gray-800/90 backdrop-blur-md rounded-2xl shadow-lg p-4 flex flex-col gap-3 border border-gray-200 dark:border-gray-700">
+            <div class="flex flex-col md:flex-row items-center justify-between gap-3">
+                <div class="flex items-center gap-3 w-full md:w-auto">
+                    <div class="bg-black text-white p-2 rounded-lg shrink-0">
+                        <i class="ph ph-globe-hemisphere-west text-2xl"></i>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <h1 id="site-title" class="text-lg font-bold leading-tight text-gray-900 dark:text-gray-100">せかにゅ</h1>
+                        <p id="site-subtitle" class="text-xs text-gray-500 dark:text-gray-400">ニュースと地理</p>
+                        <p id="today-date" class="text-[11px] text-gray-400 dark:text-gray-500"></p>
+                    </div>
+                    <button id="theme-toggle" type="button" onclick="toggleTheme()"
+                            class="shrink-0 w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                            aria-label="ダーク/ライト表示切替">
+                        <i class="ph ph-moon text-lg" aria-hidden="true"></i>
+                    </button>
+                    <a id="support-link" href="#" target="_blank" rel="noopener noreferrer"
+                       class="hidden shrink-0 ml-1 text-[11px] font-bold text-pink-500 hover:text-pink-600 items-center gap-1">
+                        <i class="ph-fill ph-heart" aria-hidden="true"></i> 応援する
+                    </a>
                 </div>
-                <div>
-                    <h1 id="site-title" class="text-lg font-bold leading-tight text-gray-900">せかにゅ</h1>
-                    <p id="site-subtitle" class="text-xs text-gray-500">ニュースと地理</p>
-                    <p id="today-date" class="text-[11px] text-gray-400"></p>
+                <div class="w-full md:w-52 shrink-0">
+                    <div class="relative">
+                        <i class="ph ph-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm" aria-hidden="true"></i>
+                        <input id="search-input" type="text" placeholder="キーワード検索..."
+                               class="w-full pl-8 pr-3 py-1.5 text-xs rounded-full border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-400"
+                               aria-label="ニュースをキーワードで検索">
+                    </div>
                 </div>
             </div>
 
-            <!-- 凡例(データから動的に生成) -->
-            <div id="legend-container" class="flex flex-wrap gap-3 text-xs font-semibold justify-end"></div>
+            <!-- 凡例(データから動的に生成。クリックでジャンルの表示/非表示を切り替え) -->
+            <div id="legend-container" class="flex flex-wrap gap-2 text-xs font-semibold justify-center md:justify-end"></div>
         </div>
     </div>
 
@@ -222,7 +287,7 @@
         <div class="p-6 relative min-h-screen flex flex-col">
             <div class="close-button" onclick="closeSidebar()" role="button" tabindex="0" aria-label="閉じる"
                  onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();closeSidebar();}">
-                <i class="ph ph-x text-xl text-gray-600" aria-hidden="true"></i>
+                <i class="ph ph-x text-xl text-gray-600 dark:text-inherit" aria-hidden="true"></i>
             </div>
             <div id="sidebar-content" class="mt-8 space-y-6">
                 <!-- ここにJSで動的にコンテンツが生成されます -->
@@ -236,6 +301,18 @@
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
     <script>
+        // ------------------------------------------------------------------
+        // サイト全体の簡易設定
+        // ------------------------------------------------------------------
+        // 投げ銭・応援リンク。使う場合は自分のKo-fi/note等のURLに書き換えると
+        // ヘッダーに「応援する」リンクが自動で表示される(空文字なら非表示のまま)。
+        const SUPPORT_URL = '';
+
+        // 「急上昇エリア」判定のしきい値(直近24時間以内に同じ地名でこの件数以上
+        // 集まったら急上昇表示にする)。ニュース件数が増えてきたら調整する。
+        const SPIKE_THRESHOLD = 4;
+        const SPIKE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
         // ------------------------------------------------------------------
         // フォールバック用サンプルデータ
         // news_data.json が読み込めない場合(パイプライン未実行/ローカルfile://表示など)
@@ -251,6 +328,7 @@
                 aiSummary: "最新のプロジェクションマッピング技術を活用した光の祭典。AIが来場者の動きに反応して光の演出を変化させる点が話題を呼んでいます。",
                 aiSummaryIsHeadlineOnly: true,
                 publishedAt: null,
+                sourceName: "",
                 url: "https://example.com/sapporo-news",
                 color: "#ec4899",
                 imageUrl: "https://picsum.photos/seed/1/800/600"
@@ -264,6 +342,7 @@
                 aiSummary: "脱石油依存を掲げる国家戦略ビジョン2030の中核プロジェクト。再生可能エネルギーのみで稼働する直線型都市の建設が急ピッチで進んでいます。",
                 aiSummaryIsHeadlineOnly: true,
                 publishedAt: null,
+                sourceName: "",
                 url: "https://example.com/saudi-news",
                 color: "#10b981",
                 imageUrl: "https://picsum.photos/seed/2/800/600"
@@ -277,6 +356,7 @@
                 aiSummary: "アフリカ全土でのモバイル送金プラットフォーム拡大に向け、欧米のベンチャーキャピタルから約150億円を調達。「シリコンサバンナ」の勢いが加速。",
                 aiSummaryIsHeadlineOnly: true,
                 publishedAt: null,
+                sourceName: "",
                 url: "https://example.com/kenya-news",
                 color: "#3b82f6",
                 imageUrl: "https://picsum.photos/seed/3/800/600"
@@ -290,6 +370,7 @@
                 aiSummary: "大手AI研究所が最新モデルを公開。数学的推論やプログラミングにおいて、専門家レベルのスコアを記録したと発表されました。",
                 aiSummaryIsHeadlineOnly: true,
                 publishedAt: null,
+                sourceName: "",
                 url: "https://example.com/sf-news",
                 color: "#3b82f6",
                 imageUrl: "https://picsum.photos/seed/4/800/600"
@@ -303,6 +384,7 @@
                 aiSummary: "豊かな海洋資源を活かし、波力・潮力を用いた持続可能なエネルギープロジェクトがスタート。深刻な電力不足の解消に期待が寄せられています。",
                 aiSummaryIsHeadlineOnly: true,
                 publishedAt: null,
+                sourceName: "",
                 url: "https://example.com/sa-news",
                 color: "#10b981",
                 imageUrl: "https://picsum.photos/seed/5/800/600"
@@ -347,6 +429,32 @@
             return `${diffDay}日前`;
         }
 
+        // --- ダークモード ---
+        function applyThemeIcon() {
+            const icon = document.querySelector('#theme-toggle i');
+            if (!icon) return;
+            const isDark = document.documentElement.classList.contains('dark');
+            icon.className = isDark ? 'ph ph-sun text-lg' : 'ph ph-moon text-lg';
+        }
+        window.toggleTheme = function () {
+            document.documentElement.classList.toggle('dark');
+            try {
+                localStorage.setItem('sekanews_theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+            } catch (e) { /* localStorage無効環境は無視 */ }
+            applyThemeIcon();
+        };
+        applyThemeIcon();
+
+        // 応援リンクの表示切替
+        (function setupSupportLink() {
+            const el = document.getElementById('support-link');
+            if (SUPPORT_URL && el) {
+                el.href = SUPPORT_URL;
+                el.classList.remove('hidden');
+                el.classList.add('flex');
+            }
+        })();
+
         // 地図の初期化(データ取得前に先に表示できる)
         const map = L.map('map', { zoomControl: false }).setView([20.0, 60.0], 3);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -366,9 +474,59 @@
         const lastUpdatedEl = document.getElementById('last-updated');
         const todayDateEl = document.getElementById('today-date');
         const loadingOverlay = document.getElementById('loading-overlay');
+        const searchInput = document.getElementById('search-input');
 
         let clusterGroup = null;
         let lastFocusedElement = null;
+
+        // --- ジャンルフィルタ・キーワード検索 ---
+        let activeCategories = null; // null = 初回未初期化(buildLegendで全ジャンルONにする)
+        let searchQuery = '';
+
+        function matchesFilter(news) {
+            if (activeCategories && !activeCategories.has(news.category)) return false;
+            if (searchQuery) {
+                const q = searchQuery.toLowerCase();
+                const haystack = `${news.title || ''} ${news.originalTitle || ''} ${news.aiSummary || ''} ${news.location.name || ''}`.toLowerCase();
+                if (!haystack.includes(q)) return false;
+            }
+            return true;
+        }
+
+        searchInput.addEventListener('input', () => {
+            searchQuery = searchInput.value.trim();
+            renderMap();
+        });
+
+        window.toggleCategory = function (category) {
+            if (activeCategories.has(category)) {
+                activeCategories.delete(category);
+            } else {
+                activeCategories.add(category);
+            }
+            renderMap();
+        };
+
+        // --- 急上昇エリア検知(大島てる方式): 直近24時間で同じ地名にピンが
+        //     集中しているエリアを検知して、地図上でハイライトする ---
+        function computeSpikyPlaces() {
+            const now = Date.now();
+            const counts = new Map();
+            newsData.forEach(n => {
+                if (n.isSponsored) return;
+                const tsStr = n.firstSeenAt || n.publishedAt;
+                if (tsStr) {
+                    const d = new Date(tsStr).getTime();
+                    if (!isNaN(d) && (now - d) > SPIKE_WINDOW_MS) return;
+                }
+                const key = n.location && n.location.name;
+                if (!key) return;
+                counts.set(key, (counts.get(key) || 0) + 1);
+            });
+            const spiky = new Set();
+            counts.forEach((c, key) => { if (c >= SPIKE_THRESHOLD) spiky.add(key); });
+            return spiky;
+        }
 
         function showStatus(message, isStale) {
             statusBanner.textContent = message;
@@ -412,17 +570,39 @@
             }
         }
 
-        // 凡例をデータ中の実際のジャンルから動的に生成
+        // 新しいピンが増えていたら軽いトースト演出を出す
+        function showNewPinsToast(count) {
+            if (count <= 0) return;
+            const toast = document.createElement('div');
+            toast.className = 'pin-toast';
+            toast.textContent = `+${count}件のニュースが新しく追加されました`;
+            document.body.appendChild(toast);
+            requestAnimationFrame(() => { toast.style.opacity = '1'; });
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 500);
+            }, 3500);
+        }
+
+        // 凡例をデータ中の実際のジャンルから動的に生成。クリックで表示/非表示を切替。
         function buildLegend() {
             const seen = new Map();
             newsData.forEach(n => {
                 if (!seen.has(n.category)) seen.set(n.category, n.color);
             });
-            legendContainer.innerHTML = Array.from(seen.entries()).map(([category, color]) => `
-                <div class="flex items-center gap-1.5">
-                    <span class="w-3 h-3 rounded-full" style="background-color:${escapeHtml(color)}"></span>${escapeHtml(category)}
-                </div>
-            `).join('');
+            if (!activeCategories) {
+                activeCategories = new Set(seen.keys());
+            }
+            legendContainer.innerHTML = Array.from(seen.entries()).map(([category, color]) => {
+                const isActive = activeCategories.has(category);
+                const catAttr = escapeHtml(category).replace(/"/g, '&quot;');
+                return `
+                    <button type="button" onclick="toggleCategory(&quot;${catAttr}&quot;)" aria-pressed="${isActive}"
+                            class="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md transition-opacity text-gray-700 dark:text-gray-200 ${isActive ? '' : 'opacity-30 grayscale'}">
+                        <span class="w-3 h-3 rounded-full" style="background-color:${escapeHtml(color)}"></span>${escapeHtml(category)}
+                    </button>
+                `;
+            }).join('');
         }
 
         function openSidebar(news, side = 'left') {
@@ -434,18 +614,35 @@
             const safeImg = safeHttpUrl(news.imageUrl, 'https://picsum.photos/800/600');
             const safeArticleUrl = safeHttpUrl(news.url, '#');
             const disclaimer = news.aiSummaryIsHeadlineOnly
-                ? `<p class="text-[11px] text-purple-400 mt-2">※ 見出しから推測したAI要約です(一般的な背景情報の補足を含む場合があります)。タイトルもAIによる日本語訳です。詳細は元記事でご確認ください。</p>`
+                ? `<p class="text-[11px] text-purple-400 dark:text-purple-300/80 mt-2">※ 見出しから推測したAI要約です(一般的な背景情報の補足を含む場合があります)。タイトルもAIによる日本語訳です。詳細は元記事でご確認ください。</p>`
                 : '';
 
             const relTime = formatRelativeTime(news.publishedAt);
             const timeHtml = relTime
-                ? `<span class="text-sm text-gray-500 flex items-center gap-1"><i class="ph ph-clock" aria-hidden="true"></i> ${escapeHtml(relTime)}</span>`
+                ? `<span class="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1"><i class="ph ph-clock" aria-hidden="true"></i> ${escapeHtml(relTime)}</span>`
                 : '';
 
             const showOriginal = news.originalTitle && news.originalTitle !== news.title;
             const originalHtml = showOriginal
-                ? `<p class="text-xs text-gray-400 mt-1.5">原文タイトル: ${escapeHtml(news.originalTitle)}</p>`
+                ? `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1.5">原文タイトル: ${escapeHtml(news.originalTitle)}</p>`
                 : '';
+
+            const sourceHtml = news.sourceName
+                ? `<p class="text-xs text-gray-400 dark:text-gray-500 mt-1">情報源: ${escapeHtml(news.sourceName)}</p>`
+                : '';
+
+            const isSponsored = !!news.isSponsored;
+            const isSpiky = !isSponsored && computeSpikyPlaces().has(news.location.name);
+            const badgesHtml = `
+                ${isSponsored ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">PR</span>` : ''}
+                ${isSpiky ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">🔥 急上昇</span>` : ''}
+            `;
+
+            const shareText = encodeURIComponent(news.title || '');
+            const shareUrlEnc = encodeURIComponent(safeArticleUrl);
+            const xShareUrl = `https://twitter.com/intent/tweet?text=${shareText}&url=${shareUrlEnc}`;
+            const lineShareUrl = `https://social-plugins.line.me/lineit/share?url=${shareUrlEnc}&text=${shareText}`;
+            const copyArg = safeArticleUrl.replace(/'/g, "\\'");
 
             sidebarContent.innerHTML = `
                 <div>
@@ -453,13 +650,15 @@
                         <span class="px-2.5 py-1 rounded-full text-xs font-bold text-white" style="background-color: ${escapeHtml(news.color)}">
                             ${escapeHtml(news.category)}
                         </span>
-                        <span class="text-sm text-gray-500 flex items-center gap-1">
+                        <span class="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1">
                             <i class="ph-fill ph-map-pin" aria-hidden="true"></i> ${escapeHtml(news.location.name)}
                         </span>
                         ${timeHtml}
+                        ${badgesHtml}
                     </div>
-                    <h2 class="text-2xl font-extrabold text-gray-900 leading-tight">${escapeHtml(news.title)}</h2>
+                    <h2 class="text-2xl font-extrabold text-gray-900 dark:text-gray-100 leading-tight">${escapeHtml(news.title)}</h2>
                     ${originalHtml}
+                    ${sourceHtml}
                 </div>
 
                 <div class="rounded-xl overflow-hidden shadow-md h-48 bg-gray-200">
@@ -467,11 +666,11 @@
                          onerror="this.onerror=null;this.src='https://picsum.photos/800/600';">
                 </div>
 
-                <div class="bg-purple-50 p-4 rounded-xl border border-purple-100">
-                    <h3 class="text-sm font-bold text-purple-700 flex items-center gap-1.5 mb-2">
+                <div class="bg-purple-50 dark:bg-purple-950/40 p-4 rounded-xl border border-purple-100 dark:border-purple-900">
+                    <h3 class="text-sm font-bold text-purple-700 dark:text-purple-300 flex items-center gap-1.5 mb-2">
                         <i class="ph-fill ph-sparkle" aria-hidden="true"></i> AI要約
                     </h3>
-                    <p class="text-sm text-gray-700 leading-relaxed font-medium">
+                    <p class="text-sm text-gray-700 dark:text-gray-200 leading-relaxed font-medium">
                         ${escapeHtml(news.aiSummary)}
                     </p>
                     ${disclaimer}
@@ -481,14 +680,20 @@
                     <a href="${escapeHtml(safeArticleUrl)}" target="_blank" rel="noopener noreferrer" class="flex items-center justify-center gap-2 bg-gray-900 hover:bg-gray-800 text-white font-bold py-3 px-4 rounded-xl transition-colors">
                         <i class="ph ph-arrow-square-out text-lg" aria-hidden="true"></i> 元記事を読む
                     </a>
-                    <div class="grid grid-cols-2 gap-3">
-                        <button onclick="alert('共有機能は開発中です！')" class="flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 px-4 rounded-xl transition-colors text-sm">
-                            <i class="ph ph-share-network text-lg" aria-hidden="true"></i> 共有
-                        </button>
-                        <button onclick="alert('ブックマークに保存しました！')" class="flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 px-4 rounded-xl transition-colors text-sm">
-                            <i class="ph ph-bookmark-simple text-lg" aria-hidden="true"></i> 後で読む
+                    <div class="grid grid-cols-3 gap-2">
+                        <a href="${xShareUrl}" target="_blank" rel="noopener noreferrer" class="flex flex-col items-center justify-center gap-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 font-bold py-2 rounded-xl transition-colors text-[11px]">
+                            <i class="ph ph-x-logo text-base" aria-hidden="true"></i> X
+                        </a>
+                        <a href="${lineShareUrl}" target="_blank" rel="noopener noreferrer" class="flex flex-col items-center justify-center gap-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 font-bold py-2 rounded-xl transition-colors text-[11px]">
+                            <i class="ph ph-chat-circle-dots text-base" aria-hidden="true"></i> LINE
+                        </a>
+                        <button onclick="copyNewsLink('${copyArg}', this)" class="flex flex-col items-center justify-center gap-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 font-bold py-2 rounded-xl transition-colors text-[11px]">
+                            <i class="ph ph-link text-base" aria-hidden="true"></i> コピー
                         </button>
                     </div>
+                    <button onclick="alert('ブックマークに保存しました！')" class="flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 font-bold py-2.5 px-4 rounded-xl transition-colors text-sm">
+                        <i class="ph ph-bookmark-simple text-lg" aria-hidden="true"></i> 後で読む
+                    </button>
                 </div>
             `;
 
@@ -499,31 +704,53 @@
             }, 10);
         }
 
+        window.copyNewsLink = function (url, btnEl) {
+            const finish = (ok) => {
+                const original = btnEl.innerHTML;
+                btnEl.innerHTML = ok
+                    ? '<i class="ph ph-check text-base" aria-hidden="true"></i> コピー済'
+                    : '<i class="ph ph-x text-base" aria-hidden="true"></i> 失敗';
+                setTimeout(() => { btnEl.innerHTML = original; }, 1500);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url).then(() => finish(true)).catch(() => finish(false));
+            } else {
+                finish(false);
+            }
+        };
+
         function openAreaNewsList() {
             lastFocusedElement = document.activeElement;
             const bounds = map.getBounds();
-            const visibleNews = newsData.filter(news => bounds.contains([news.location.lat, news.location.lng]));
+            const visibleNews = newsData.filter(news => matchesFilter(news) && bounds.contains([news.location.lat, news.location.lng]));
 
             sidebarPanel.classList.remove('left-side', 'right-side');
             sidebarPanel.classList.add('right-side');
 
             if (visibleNews.length === 0) {
-                sidebarContent.innerHTML = `<div class="text-center text-gray-500 mt-10">このエリアにはニュースがありません</div>`;
+                sidebarContent.innerHTML = `<div class="text-center text-gray-500 dark:text-gray-400 mt-10">このエリアにはニュースがありません</div>`;
             } else {
-                let listHtml = `<h2 class="text-xl font-extrabold mb-6 flex items-center gap-2"><i class="ph ph-map-pin" aria-hidden="true"></i> 表示中エリアのニュース(${visibleNews.length}件)</h2><div class="space-y-4">`;
+                const spikyPlaces = computeSpikyPlaces();
+                let listHtml = `<h2 class="text-xl font-extrabold mb-6 flex items-center gap-2 text-gray-900 dark:text-gray-100"><i class="ph ph-map-pin" aria-hidden="true"></i> 表示中エリアのニュース(${visibleNews.length}件)</h2><div class="space-y-4">`;
                 visibleNews.forEach(news => {
                     const relTime = formatRelativeTime(news.publishedAt);
-                    const timeBadge = relTime ? `<span class="text-[11px] text-gray-400">・${escapeHtml(relTime)}</span>` : '';
+                    const timeBadge = relTime ? `<span class="text-[11px] text-gray-400 dark:text-gray-500">・${escapeHtml(relTime)}</span>` : '';
+                    const isSponsored = !!news.isSponsored;
+                    const isSpiky = !isSponsored && spikyPlaces.has(news.location.name);
+                    const tag = isSponsored
+                        ? `<span class="text-[9px] font-bold text-amber-600 dark:text-amber-400">PR</span>`
+                        : (isSpiky ? `<span class="text-[9px] font-bold text-red-600 dark:text-red-400">🔥急上昇</span>` : '');
                     listHtml += `
-                        <div class="bg-white border border-gray-100 rounded-xl p-4 shadow-sm hover:shadow-md cursor-pointer transition-shadow" role="button" tabindex="0"
+                        <div class="bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl p-4 shadow-sm hover:shadow-md cursor-pointer transition-shadow" role="button" tabindex="0"
                              onclick="openSidebarFromList(${news.id})"
                              onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSidebarFromList(${news.id});}">
                             <div class="flex items-center gap-2 mb-2">
                                 <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${escapeHtml(news.color)}"></span>
-                                <span class="text-xs font-bold text-gray-500">${escapeHtml(news.location.name)}</span>
+                                <span class="text-xs font-bold text-gray-500 dark:text-gray-400">${escapeHtml(news.location.name)}</span>
                                 ${timeBadge}
+                                ${tag}
                             </div>
-                            <h3 class="font-bold text-sm leading-tight text-gray-900">${escapeHtml(news.title)}</h3>
+                            <h3 class="font-bold text-sm leading-tight text-gray-900 dark:text-gray-100">${escapeHtml(news.title)}</h3>
                         </div>
                     `;
                 });
@@ -554,7 +781,7 @@
 
         function updateVisibleNewsCount() {
             const bounds = map.getBounds();
-            const visibleNews = newsData.filter(news => bounds.contains([news.location.lat, news.location.lng]));
+            const visibleNews = newsData.filter(news => matchesFilter(news) && bounds.contains([news.location.lat, news.location.lng]));
 
             if (visibleNews.length > 0) {
                 areaNewsBtn.style.display = 'flex';
@@ -573,11 +800,24 @@
             }
             clusterGroup = L.markerClusterGroup({ maxClusterRadius: 55, spiderfyOnMaxZoom: true });
 
+            const spikyPlaces = computeSpikyPlaces();
+
             newsData.forEach(news => {
+                if (!matchesFilter(news)) return;
+
+                const isSponsored = !!news.isSponsored;
+                const isSpiky = !isSponsored && spikyPlaces.has(news.location.name);
+                const ringClass = isSpiky ? 'spike-ring' : '';
+                const sponsoredBorder = isSponsored ? 'border:2px solid #eab308;' : '';
+                const badgeHtml = isSponsored
+                    ? `<span style="position:absolute;top:-6px;right:-6px;background:#111827;color:#fbbf24;font-size:8px;font-weight:800;padding:1px 4px;border-radius:6px;line-height:1.4;">PR</span>`
+                    : (isSpiky ? `<span style="position:absolute;top:-6px;right:-6px;font-size:11px;line-height:1;">🔥</span>` : '');
+
                 const customIcon = L.divIcon({
-                    className: 'custom-marker',
-                    html: `<div style="background-color: ${escapeHtml(news.color)}; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                             <i class="ph-bold ph-newspaper text-white text-[10px]" aria-hidden="true"></i>
+                    className: `custom-marker ${ringClass}`,
+                    html: `<div style="position:relative; background-color: ${escapeHtml(news.color)}; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); ${sponsoredBorder}">
+                             <i class="ph-bold ${isSponsored ? 'ph-storefront' : 'ph-newspaper'} text-white text-[10px]" aria-hidden="true"></i>
+                             ${badgeHtml}
                            </div>`,
                     iconSize: [30, 30],
                     iconAnchor: [15, 15]
@@ -610,6 +850,8 @@
                     <div class="flex items-center gap-1.5 mb-1">
                         <span class="w-2 h-2 rounded-full" style="background-color: ${escapeHtml(news.color)}"></span>
                         <span class="text-[10px] text-gray-500">${escapeHtml(news.category)}</span>
+                        ${isSponsored ? '<span class="text-[9px] font-bold text-amber-600">PR</span>' : ''}
+                        ${isSpiky ? '<span class="text-[9px] font-bold text-red-600">🔥急上昇</span>' : ''}
                     </div>
                     <div class="text-xs">${escapeHtml(news.title)}</div>
                  `, {
@@ -650,6 +892,7 @@
         async function loadNewsData() {
             let generatedAt = null;
             let nextUpdateAt = null;
+            let loadedReal = false;
             try {
                 const res = await fetch('news_data.json', { cache: 'no-store' });
                 if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -659,10 +902,21 @@
                 newsData = normalized.items;
                 generatedAt = normalized.generated_at;
                 nextUpdateAt = normalized.next_update_at;
+                loadedReal = true;
             } catch (e) {
                 console.warn('news_data.json 読み込み失敗。サンプルデータで表示します。', e);
                 newsData = sampleNewsData;
                 showStatus('news_data.json を読み込めなかったため、サンプルデータを表示中です。pipeline.py を実行し、ローカルサーバー経由で開いてください。');
+            }
+
+            if (loadedReal) {
+                try {
+                    const prevCount = parseInt(localStorage.getItem('sekanews_prev_count') || '0', 10);
+                    if (prevCount > 0 && newsData.length > prevCount) {
+                        showNewPinsToast(newsData.length - prevCount);
+                    }
+                    localStorage.setItem('sekanews_prev_count', String(newsData.length));
+                } catch (e) { /* localStorage無効環境は無視 */ }
             }
 
             renderMap();
