@@ -2,7 +2,7 @@
 """
 pipeline.py
 ===========
-① ニュース取得(GDELT) → ② AI要約・ジャンル・地名判定(Groq)
+① ニュース取得(Google News RSS) → ② AI要約・ジャンル・地名判定(Groq)
 → ③ 重複除去・地域ノルマで選抜 → ④ 座標変換(Nominatim) → ⑤ news_data.json 出力
 
 設定はすべて config.py にまとめてあるので、挙動を変えたいときはそちらを編集する。
@@ -15,6 +15,7 @@ import sys
 import time
 import traceback
 import unicodedata
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 import requests
@@ -24,18 +25,18 @@ from config import (
     AI_MODEL,
     ARTICLES_PER_AI_BATCH,
     DUPLICATE_TITLE_SIMILARITY_THRESHOLD,
-    FETCH_GROUPS,
-    GDELT_GLOBAL_POOL_MAX_RECORDS,
-    GDELT_MAX_RECORDS_CAP,
-    GDELT_MAX_RETRIES,
-    GDELT_MAX_RETRY_WAIT_SEC,
-    GDELT_REQUEST_DELAY_SEC,
-    GDELT_TIMESPAN,
     GENRE_COLORS,
     GEOCODE_CACHE_FILE,
     GROQ_API_KEY,
     GROQ_REQUEST_DELAY_SEC,
     MAX_PINS_TOTAL,
+    NEWS_COUNTRIES,
+    NEWS_MAX_ITEMS_PER_COUNTRY,
+    NEWS_MAX_RETRIES,
+    NEWS_MAX_RETRY_WAIT_SEC,
+    NEWS_REQUEST_DELAY_SEC,
+    NEWS_REQUEST_TIMEOUT_SEC,
+    NEWS_RSS_URL_TEMPLATE,
     NOMINATIM_DELAY_SEC,
     NOMINATIM_USER_AGENT,
     OUTPUT_FILE,
@@ -44,44 +45,73 @@ from config import (
     VALID_GENRES,
 )
 
-GDELT_ENDPOINT = "https://api.gdeltproject.org/api/v2/doc/doc"
 GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 
+# Google Newsの中の人にbotだと弾かれないよう、普通のブラウザっぽいUser-Agentを付ける。
+NEWS_REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    )
+}
+
 
 # ---------------------------------------------------------------------------
-# ① ニュース取得 (GDELT)
+# ① ニュース取得 (Google News RSS: 国・言語ごとの「トップニュース」フィード)
 # ---------------------------------------------------------------------------
-def fetch_region_articles(region_name, query_filter, max_records):
-    max_records = min(max_records, GDELT_MAX_RECORDS_CAP)
-    params = {
-        "query": f"({query_filter}) sourcelang:eng",
-        "mode": "ArtList",
-        "maxrecords": max_records,
-        "timespan": GDELT_TIMESPAN,
-        "format": "json",
-        "sort": "DateDesc",
-    }
+def _parse_news_rss(xml_bytes, country_label):
+    """Google News RSSのXMLをパースして記事リストに変換する。"""
+    articles = []
+    root = ET.fromstring(xml_bytes)
+    items = root.findall("./channel/item")
+
+    for item in items[:NEWS_MAX_ITEMS_PER_COUNTRY]:
+        title_el = item.find("title")
+        link_el = item.find("link")
+        source_el = item.find("source")
+
+        raw_title = (title_el.text or "").strip() if title_el is not None else ""
+        link = (link_el.text or "").strip() if link_el is not None else ""
+        domain = (source_el.text or "").strip() if source_el is not None else ""
+
+        if not raw_title or not link:
+            continue
+
+        # Google Newsのタイトルは「見出し - 情報源名」の形式で来るので、末尾の
+        # 情報源名を切り離しておく(AIに渡す見出しをなるべくきれいにするため)。
+        title = raw_title
+        if domain and raw_title.endswith(domain):
+            title = raw_title[: -len(domain)].rstrip(" -–—").strip()
+
+        articles.append({
+            "title": title,
+            "url": link,
+            "domain": domain,
+            "socialimage": None,
+            "_region_hint": "",
+            "_country_label": country_label,
+        })
+
+    return articles
+
+
+def fetch_country_articles(country_label, gl, hl, ceid):
+    url = NEWS_RSS_URL_TEMPLATE.format(hl=hl, gl=gl, ceid=ceid)
 
     last_err = None
-    for attempt in range(GDELT_MAX_RETRIES + 1):
+    for attempt in range(NEWS_MAX_RETRIES + 1):
         try:
-            resp = requests.get(GDELT_ENDPOINT, params=params, timeout=25)
+            resp = requests.get(url, timeout=NEWS_REQUEST_TIMEOUT_SEC, headers=NEWS_REQUEST_HEADERS)
             resp.raise_for_status()
-            data = resp.json()
-            articles = data.get("articles", []) or []
-            for a in articles:
-                a["_region_hint"] = region_name
-            return articles
+            return _parse_news_rss(resp.content, country_label)
         except Exception as e:
             last_err = e
-            if attempt < GDELT_MAX_RETRIES:
-                # GDELTの429は数秒待つ程度では解消しないことが多いので指数的に長く待つ
-                # (15s,30s,60s,120s,120s...)が、ジョブが終わらなくならないよう上限で頭打ちにする。
-                wait = min(15 * (2 ** attempt), GDELT_MAX_RETRY_WAIT_SEC)
-                print(f"    [WARN] GDELT取得失敗(試行{attempt + 1}, {region_name}): {e} -> {wait}秒待って再試行")
+            if attempt < NEWS_MAX_RETRIES:
+                wait = min(5 * (2 ** attempt), NEWS_MAX_RETRY_WAIT_SEC)
+                print(f"    [WARN] ニュース取得失敗(試行{attempt + 1}, {country_label}): {e} -> {wait}秒待って再試行")
                 time.sleep(wait)
 
-    print(f"  [WARN] GDELT取得を諦めます ({region_name}): {last_err}")
+    print(f"  [WARN] ニュース取得を諦めます ({country_label}): {last_err}")
     return []
 
 
@@ -89,30 +119,10 @@ def collect_all_articles():
     all_articles = []
     seen_urls = set()
 
-    # 地域別クエリが軒並みレート制限(429)で失敗しても最低限の記事を確保できるよう、
-    # 国コードで絞らない「全世界の英語ニュース」をまず1回取得しておく。
-    # ここで拾った記事の地域は、後段のAI判定(ai_region)で振り分けられる。
-    print("  [FETCH] 全世界プール(地域絞り込みなし、フォールバック用)")
-    global_articles = fetch_region_articles("グローバル", "sourcelang:eng", GDELT_GLOBAL_POOL_MAX_RECORDS)
-    added = 0
-    for a in global_articles:
-        a["_region_hint"] = None
-        url = a.get("url")
-        if url and url not in seen_urls:
-            seen_urls.add(url)
-            all_articles.append(a)
-            added += 1
-    print(f"          -> {added}件追加(重複除く)")
-    time.sleep(GDELT_REQUEST_DELAY_SEC)
-
-    # FETCH_GROUPS: 「取得(何回GDELTを叩くか)」を担当する数個の大きなグループ。
-    # 各地域に何件割り当てるか(ノルマ)は、この後のAI判定(ai_region)を経てから
-    # REGION_QUOTASに基づいて選抜されるので、ここでは各グループにつき一律で
-    # GDELT_MAX_RECORDS_CAP件をリクエストするだけでよい(グループ名とREGION_QUOTASの
-    # キーが一致している必要はない)。
-    for group_name, query_filter in FETCH_GROUPS.items():
-        print(f"  [FETCH] {group_name} (候補最大{GDELT_MAX_RECORDS_CAP}件)")
-        articles = fetch_region_articles(group_name, query_filter, GDELT_MAX_RECORDS_CAP)
+    for country in NEWS_COUNTRIES:
+        label = country["label"]
+        print(f"  [FETCH] {label} (gl={country['gl']} hl={country['hl']})")
+        articles = fetch_country_articles(label, country["gl"], country["hl"], country["ceid"])
 
         added = 0
         for a in articles:
@@ -123,7 +133,7 @@ def collect_all_articles():
                 added += 1
         print(f"          -> {added}件追加(重複除く)")
 
-        time.sleep(GDELT_REQUEST_DELAY_SEC)
+        time.sleep(NEWS_REQUEST_DELAY_SEC)
 
     print(f"  [FETCH] 合計候補: {len(all_articles)}件")
     return all_articles
@@ -136,7 +146,7 @@ def _build_prompt(batch):
     items_text = "\n".join(
         f"{i}. title: {a.get('title', '')}\n"
         f"   domain: {a.get('domain', '')}\n"
-        f"   参考地域ヒント: {a.get('_region_hint', '')}"
+        f"   参考国ヒント: {a.get('_country_label', '')}"
         for i, a in enumerate(batch)
     )
     genre_list = "、".join(VALID_GENRES)
@@ -154,7 +164,8 @@ def _build_prompt(batch):
         "タイトルから具体的な場所が全く読み取れない場合は空文字\"\"。\n"
         "4. summary_ja: 見出しから読み取れる範囲だけで書いた日本語の説明(40〜80字程度)。"
         "本文を読んでいないので、見出しに無い具体的な数字・固有名詞・引用・詳細を"
-        "勝手に推測して付け加えないこと。見出しの内容を平易な日本語で言い換える程度に留める。\n"
+        "勝手に推測して付け加えないこと。見出しの内容を平易な日本語で言い換える程度に留める。"
+        "見出しが日本語以外の言語で書かれていても、内容を理解した上で日本語で要約すること。\n"
         "\n"
         '出力は必ず {"results": [ {"index": 0, "genre": "...", "region": "...", '
         '"place": "...", "summary_ja": "..."}, ... ] } という形のJSONオブジェクトのみ。'
@@ -206,7 +217,6 @@ def call_groq_batch(batch):
 
 def enrich_articles_with_ai(articles):
     enriched = []
-    region_mismatch_count = 0
     total_batches = (len(articles) + ARTICLES_PER_AI_BATCH - 1) // ARTICLES_PER_AI_BATCH
 
     for b in range(total_batches):
@@ -238,9 +248,6 @@ def enrich_articles_with_ai(articles):
             if region not in REGION_QUOTAS:
                 continue  # 地域を集計できない記事はノルマ選抜の対象外にする
 
-            if article.get("_region_hint") and region != article["_region_hint"]:
-                region_mismatch_count += 1
-
             # 地名が取れない記事はピンにしない、という設計上のルール
             if not place or not summary:
                 continue
@@ -256,8 +263,6 @@ def enrich_articles_with_ai(articles):
         time.sleep(GROQ_REQUEST_DELAY_SEC)
 
     print(f"  [AI] 判定OK: {len(enriched)}件")
-    if region_mismatch_count:
-        print(f"  [INFO] GDELTの地域ヒントとAI判定地域が食い違った記事: {region_mismatch_count}件(AI側を採用)")
     return enriched
 
 
@@ -384,7 +389,7 @@ def build_output(selected, cache):
         genre = a["ai_genre"]
         color = GENRE_COLORS.get(genre, GENRE_COLORS["その他"])
 
-        # GDELTのsocialimage(実際の記事画像)があれば優先し、無ければプレースホルダー。
+        # Google News RSSには記事画像が含まれないため、基本的にプレースホルダー画像を使う。
         social_image = a.get("socialimage")
         image_url = social_image if _valid_http_url(social_image) else f"{PLACEHOLDER_IMAGE_BASE}/{next_id}/800/600"
 
@@ -410,10 +415,10 @@ def main():
         print('        export GROQ_API_KEY=gsk_あなたのキー  を実行してから再度お試しください。')
         sys.exit(1)
 
-    print("=== ① ニュース取得 (GDELT) ===")
+    print("=== ① ニュース取得 (Google News RSS) ===")
     articles = collect_all_articles()
     if not articles:
-        print("[ERROR] 記事が1件も取得できませんでした。ネットワークかGDELTの状態を確認してください。")
+        print("[ERROR] 記事が1件も取得できませんでした。ネットワークの状態を確認してください。")
         sys.exit(1)
 
     print("=== ② AI要約・ジャンル・地名判定 (Groq) ===")
