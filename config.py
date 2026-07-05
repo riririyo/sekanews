@@ -30,32 +30,113 @@ AI_MAX_RETRIES = 2
 GROQ_REQUEST_DELAY_SEC = 1.2
 
 # ---------------------------------------------------------------------------
-# ② ニュース取得 (GDELT 2.0 DOC API / 無料・キー不要)
+# ② ニュース取得 (Google News RSS / 無料・キー不要・国別)
 # ---------------------------------------------------------------------------
-# 取得対象の時間範囲。1時間ごと更新を想定し、cronの実行遅延(GitHub Actionsは
-# 高負荷時に数分〜十数分ずれることがある)に備えて少し広め(75分)にしてある。
-GDELT_TIMESPAN = "75min"
+# 重要な経緯: 以前はGDELT 2.0 DOC APIを使っていたが、実際にGitHub Actions上で
+# 動かしたところ、クエリをどう工夫しても(1国だけの単純なクエリでも)ほぼ100%
+# 429(レート制限)になることが実測でわかった。GDELT側がGitHub Actionsのような
+# クラウドの共有IPそのものを広範囲にブロックしている可能性が高く、リクエストの
+# 減らし方やリトライ待機時間をいくら調整しても解決しなかった(実際に検証したところ、
+# 6グループ×5回リトライ=合計30リクエストが「全て」429になった)。
+# そのため取得元をGoogle News RSS(国・言語ごとの「トップニュース」フィード、
+# https://news.google.com/rss?hl=..&gl=..&ceid=.. )に切り替えた。APIキー不要・
+# クラウドIPからでも問題なく使え、国ごとに1リクエストで済むため合計リクエスト数も
+# 少ない。ただし記事本文への直リンクではなくGoogle Newsの中継URLになる点、
+# サムネイル画像が付かない点(→プレースホルダー画像で補う)には留意。
+NEWS_RSS_URL_TEMPLATE = "https://news.google.com/rss?hl={hl}&gl={gl}&ceid={ceid}"
 
-# GDELT DOC APIの1リクエストあたりの最大取得件数(API仕様上の上限)。
-# 実測で判明した重要な問題: GitHub Actionsの共有IPは既に他の無数のワークフローが
-# GDELTを叩いているらしく、リクエスト数が多いほど429(レート制限)に当たりやすい。
-# そのため「国ごとに細かくリクエストを分ける」のをやめ、後述のFETCH_GROUPSで
-# 数回の大きなリクエストにまとめてリクエスト総数そのものを減らす方針にしてある。
-GDELT_MAX_RECORDS_CAP = 250
+# Google Newsへのリクエスト間隔(秒)。GDELTほど神経質になる必要はないが、
+# 短時間に連打すると一時的に弾かれることがあるので余裕を持たせてある。
+NEWS_REQUEST_DELAY_SEC = 1.5
 
-# GDELTへのリクエスト間隔(秒)。
-GDELT_REQUEST_DELAY_SEC = 5.0
+# 1リクエストのタイムアウト秒数。
+NEWS_REQUEST_TIMEOUT_SEC = 10
 
-# GDELT取得が失敗した場合のリトライ回数。待ち時間は 15s, 30s, 60s, 120s, 120s... と
-# 指数的に伸びて120秒で頭打ちにしてある(GDELTの429は数秒待つ程度では解消しないことが
-# 多いため長めに待つが、際限なく伸ばすとジョブが終わらなくなるので上限を設けている)。
-GDELT_MAX_RETRIES = 5
-GDELT_MAX_RETRY_WAIT_SEC = 120
+# 取得が失敗した場合のリトライ回数と待機時間(秒、指数的に増加、上限あり)。
+# GDELTでの反省を踏まえ、万一Google News側も塞がっていた場合に備えて短めにしてある
+# (1国あたり最大でもリクエストタイムアウト10秒×3回+待機10秒程度に収まるようにし、
+# 仮に全滅しても全体の実行時間が際限なく伸びないようにしている)。
+NEWS_MAX_RETRIES = 2
+NEWS_MAX_RETRY_WAIT_SEC = 10
 
-# 地域別クエリが軒並み429で失敗しても最低限の記事が確保できるよう、国コードで絞らない
-# 「全世界の英語ニュース」も1回まとめて取得しておく(地域はAIの判定(ai_region)で
-# 事後的に割り振られるので、地域選抜のロジックには影響しない)。
-GDELT_GLOBAL_POOL_MAX_RECORDS = 250
+# 1つの国のフィードから読み込む記事数の上限(Google News RSSは1フィードにつき
+# だいたい30〜100件程度を返す。多すぎる場合はここで頭打ちにする)。
+NEWS_MAX_ITEMS_PER_COUNTRY = 100
+
+# 取得対象の国・言語の一覧。(表示用ラベル, gl=国コード, hl=言語コード, ceid)。
+# ここを増減させることで「どの国から記事を集めてくるか」を調整できる。
+# 実際にどの地域のノルマに割り振られるかはAIの判定(ai_region)で決まるため、
+# ここに無い国の都市名がAIによって記事から読み取られることもある
+# (例: 記事本文中に別の国の地名が出てくる場合など)。
+# ザンビア・ボリビアのような、通常あまり報道で目立たない国もあえて含めている。
+NEWS_COUNTRIES = [
+    # --- 日本 ---
+    {"label": "日本", "gl": "JP", "hl": "ja", "ceid": "JP:ja"},
+    # --- 東アジア ---
+    {"label": "中国", "gl": "CN", "hl": "zh-Hans", "ceid": "CN:zh-Hans"},
+    {"label": "韓国", "gl": "KR", "hl": "ko", "ceid": "KR:ko"},
+    {"label": "台湾", "gl": "TW", "hl": "zh-Hant", "ceid": "TW:zh-Hant"},
+    # --- 東南アジア ---
+    {"label": "インドネシア", "gl": "ID", "hl": "id", "ceid": "ID:id"},
+    {"label": "タイ", "gl": "TH", "hl": "th", "ceid": "TH:th"},
+    {"label": "ベトナム", "gl": "VN", "hl": "vi", "ceid": "VN:vi"},
+    {"label": "フィリピン", "gl": "PH", "hl": "en-PH", "ceid": "PH:en"},
+    {"label": "マレーシア", "gl": "MY", "hl": "en-MY", "ceid": "MY:en"},
+    {"label": "シンガポール", "gl": "SG", "hl": "en-SG", "ceid": "SG:en"},
+    # --- 南アジア ---
+    {"label": "インド", "gl": "IN", "hl": "en-IN", "ceid": "IN:en"},
+    {"label": "パキスタン", "gl": "PK", "hl": "en-PK", "ceid": "PK:en"},
+    {"label": "バングラデシュ", "gl": "BD", "hl": "bn-BD", "ceid": "BD:bn"},
+    {"label": "スリランカ", "gl": "LK", "hl": "en-LK", "ceid": "LK:en"},
+    {"label": "ネパール", "gl": "NP", "hl": "ne-NP", "ceid": "NP:ne"},
+    # --- 中東 ---
+    {"label": "サウジアラビア", "gl": "SA", "hl": "ar", "ceid": "SA:ar"},
+    {"label": "イスラエル", "gl": "IL", "hl": "en-IL", "ceid": "IL:en"},
+    {"label": "トルコ", "gl": "TR", "hl": "tr", "ceid": "TR:tr"},
+    {"label": "アラブ首長国連邦", "gl": "AE", "hl": "en-AE", "ceid": "AE:en"},
+    {"label": "ヨルダン", "gl": "JO", "hl": "ar", "ceid": "JO:ar"},
+    # --- アフリカ北部 ---
+    {"label": "エジプト", "gl": "EG", "hl": "ar", "ceid": "EG:ar"},
+    {"label": "モロッコ", "gl": "MA", "hl": "fr", "ceid": "MA:fr"},
+    {"label": "アルジェリア", "gl": "DZ", "hl": "fr", "ceid": "DZ:fr"},
+    {"label": "チュニジア", "gl": "TN", "hl": "fr", "ceid": "TN:fr"},
+    # --- アフリカ南部・東部 ---
+    {"label": "南アフリカ", "gl": "ZA", "hl": "en-ZA", "ceid": "ZA:en"},
+    {"label": "ケニア", "gl": "KE", "hl": "en-KE", "ceid": "KE:en"},
+    {"label": "ナイジェリア", "gl": "NG", "hl": "en-NG", "ceid": "NG:en"},
+    {"label": "ガーナ", "gl": "GH", "hl": "en-GH", "ceid": "GH:en"},
+    {"label": "タンザニア", "gl": "TZ", "hl": "en-TZ", "ceid": "TZ:en"},
+    {"label": "ウガンダ", "gl": "UG", "hl": "en-UG", "ceid": "UG:en"},
+    {"label": "ザンビア", "gl": "ZM", "hl": "en-ZM", "ceid": "ZM:en"},
+    {"label": "ジンバブエ", "gl": "ZW", "hl": "en-ZW", "ceid": "ZW:en"},
+    # --- 西欧 ---
+    {"label": "イギリス", "gl": "GB", "hl": "en-GB", "ceid": "GB:en"},
+    {"label": "フランス", "gl": "FR", "hl": "fr", "ceid": "FR:fr"},
+    {"label": "ドイツ", "gl": "DE", "hl": "de", "ceid": "DE:de"},
+    {"label": "イタリア", "gl": "IT", "hl": "it", "ceid": "IT:it"},
+    {"label": "スペイン", "gl": "ES", "hl": "es", "ceid": "ES:es"},
+    {"label": "オランダ", "gl": "NL", "hl": "nl", "ceid": "NL:nl"},
+    # --- 東欧・ロシア ---
+    {"label": "ロシア", "gl": "RU", "hl": "ru", "ceid": "RU:ru"},
+    {"label": "ポーランド", "gl": "PL", "hl": "pl", "ceid": "PL:pl"},
+    {"label": "ウクライナ", "gl": "UA", "hl": "uk", "ceid": "UA:uk"},
+    {"label": "ルーマニア", "gl": "RO", "hl": "ro", "ceid": "RO:ro"},
+    # --- 北米 ---
+    {"label": "アメリカ", "gl": "US", "hl": "en-US", "ceid": "US:en"},
+    {"label": "カナダ", "gl": "CA", "hl": "en-CA", "ceid": "CA:en"},
+    {"label": "メキシコ", "gl": "MX", "hl": "es-419", "ceid": "MX:es-419"},
+    # --- 中南米 ---
+    {"label": "ブラジル", "gl": "BR", "hl": "pt-BR", "ceid": "BR:pt-419"},
+    {"label": "アルゼンチン", "gl": "AR", "hl": "es-419", "ceid": "AR:es-419"},
+    {"label": "コロンビア", "gl": "CO", "hl": "es-419", "ceid": "CO:es-419"},
+    {"label": "ペルー", "gl": "PE", "hl": "es-419", "ceid": "PE:es-419"},
+    {"label": "ボリビア", "gl": "BO", "hl": "es-419", "ceid": "BO:es-419"},
+    {"label": "エクアドル", "gl": "EC", "hl": "es-419", "ceid": "EC:es-419"},
+    {"label": "チリ", "gl": "CL", "hl": "es-419", "ceid": "CL:es-419"},
+    # --- オセアニア ---
+    {"label": "オーストラリア", "gl": "AU", "hl": "en-AU", "ceid": "AU:en"},
+    {"label": "ニュージーランド", "gl": "NZ", "hl": "en-NZ", "ceid": "NZ:en"},
+]
 
 # ---------------------------------------------------------------------------
 # ③ 地域バランス (合計およそ1000件のピンを狙う設定)
@@ -65,6 +146,8 @@ GDELT_GLOBAL_POOL_MAX_RECORDS = 250
 # 注意: ニュースが少ない地域(オセアニア等)は該当時間帯にノルマ分の記事が
 #       存在せず未達になることがある。その場合は他地域のあまり記事で自動的に
 #       穴埋めされるので、合計ピン数自体はMAX_PINS_TOTALに近づく。
+# なお、この分類はNEWS_COUNTRIESの取得元とは独立していて、実際にどの地域に
+# 割り振られるかはAIが記事内容から判定する(ai_region)。
 REGION_QUOTAS = {
     "日本": 90,
     "東アジア": 90,
@@ -78,58 +161,6 @@ REGION_QUOTAS = {
     "北米": 130,
     "中南米": 70,
     "オセアニア": 50,
-}
-
-# ---------------------------------------------------------------------------
-# GDELTから記事を取ってくる際の「取得グループ」。
-# ---------------------------------------------------------------------------
-# 重要: 以前は上のREGION_QUOTASと同じ12分類でGDELTに1回ずつ(=12回)リクエストして
-# いたが、GitHub Actionsの共有IPからのアクセスは元々429(レート制限)に当たりやすく、
-# リクエスト回数が多いほど失敗が増えることが実測でわかった。
-# そこで「取得(何回GDELTを叩くか)」と「選抜(どの地域に何件割り当てるか)」を分離し、
-# 取得は下記の数個の大きなグループにまとめてリクエスト総数を減らす。どのグループの
-# 記事も、実際の地域振り分けはAIの判定(ai_region)で行われる(上のREGION_QUOTASの
-# 12分類に従う)ので、ここのグループ分けは「何をまとめて1回のリクエストにするか」
-# だけの都合であり、REGION_QUOTASのキーと一致している必要はない。
-# 各グループにはできるだけ多くの国コードを詰め込むことで、南アフリカだけでなく
-# ザンビアやジンバブエ、ブラジルだけでなくボリビアやエクアドルなど、あまり報道され
-# ない国のニュースも拾える確率を上げている(FIPS 10-4コードはうろ覚えの部分もあるので、
-# 狙った国が全然出てこない場合はここのコードを見直すとよい)。
-FETCH_GROUPS = {
-    "日本": "sourcecountry:JA",
-    "アジア(東・東南・南)": (
-        "sourcecountry:CH OR sourcecountry:KS OR sourcecountry:TW OR sourcecountry:KN OR "
-        "sourcecountry:MG OR sourcecountry:ID OR sourcecountry:TH OR sourcecountry:VM OR "
-        "sourcecountry:RP OR sourcecountry:MY OR sourcecountry:SN OR sourcecountry:CB OR "
-        "sourcecountry:LA OR sourcecountry:BM OR sourcecountry:IN OR sourcecountry:PK OR "
-        "sourcecountry:BG OR sourcecountry:CE OR sourcecountry:NP OR sourcecountry:BT"
-    ),
-    "中東・アフリカ": (
-        "sourcecountry:SA OR sourcecountry:IR OR sourcecountry:IZ OR sourcecountry:IS OR "
-        "sourcecountry:TU OR sourcecountry:JO OR sourcecountry:LE OR sourcecountry:SY OR "
-        "sourcecountry:YM OR sourcecountry:KU OR sourcecountry:EG OR sourcecountry:LY OR "
-        "sourcecountry:AG OR sourcecountry:MO OR sourcecountry:TS OR sourcecountry:SF OR "
-        "sourcecountry:KE OR sourcecountry:ET OR sourcecountry:TZ OR sourcecountry:UG OR "
-        "sourcecountry:NI OR sourcecountry:ZA OR sourcecountry:ZI OR sourcecountry:MZ OR "
-        "sourcecountry:RW OR sourcecountry:SO OR sourcecountry:MA OR sourcecountry:GH OR "
-        "sourcecountry:CM OR sourcecountry:SG OR sourcecountry:IV OR sourcecountry:BC OR "
-        "sourcecountry:WA"
-    ),
-    "欧州": (
-        "sourcecountry:UK OR sourcecountry:FR OR sourcecountry:GM OR sourcecountry:IT OR "
-        "sourcecountry:SP OR sourcecountry:NL OR sourcecountry:BE OR sourcecountry:RS OR "
-        "sourcecountry:PL OR sourcecountry:UP OR sourcecountry:RO OR sourcecountry:SW OR "
-        "sourcecountry:SZ OR sourcecountry:AU OR sourcecountry:GR OR sourcecountry:PO OR "
-        "sourcecountry:HU OR sourcecountry:DA OR sourcecountry:NO OR sourcecountry:FI OR "
-        "sourcecountry:IC OR sourcecountry:EI"
-    ),
-    "南北アメリカ・オセアニア": (
-        "sourcecountry:US OR sourcecountry:CA OR sourcecountry:MX OR sourcecountry:BR OR "
-        "sourcecountry:AR OR sourcecountry:CI OR sourcecountry:CO OR sourcecountry:PE OR "
-        "sourcecountry:VE OR sourcecountry:BL OR sourcecountry:EC OR sourcecountry:UY OR "
-        "sourcecountry:PM OR sourcecountry:GT OR sourcecountry:CU OR sourcecountry:DR OR "
-        "sourcecountry:AS OR sourcecountry:NZ"
-    ),
 }
 
 # ---------------------------------------------------------------------------
@@ -177,8 +208,8 @@ GEOCODE_CACHE_FILE = "geocode_cache.json"
 OUTPUT_FILE = "news_data.json"
 
 # 記事にサムネイル画像URLを持たせたい場合のプレースホルダー(無料・キー不要)。
-# GDELTのsocialimage(実際の記事画像)が取れなかった記事にのみ使われるフォールバック。
-# id をシードにして毎回同じ画像が出るようにしている。
+# Google News RSSには記事画像が含まれないため、基本的に全記事がこのプレースホルダー
+# 画像になる。id をシードにして毎回同じ画像が出るようにしている。
 PLACEHOLDER_IMAGE_BASE = "https://picsum.photos/seed"
 
 # 注意: サイトタイトル/サブタイトル(「せかにゅ」「ニュースと地理」)は
