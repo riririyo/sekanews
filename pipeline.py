@@ -28,6 +28,7 @@ import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from urllib.parse import quote
 
 import requests
 
@@ -42,14 +43,17 @@ from config import (
     GROQ_API_KEY,
     GROQ_REQUEST_DELAY_SEC,
     ITEM_MAX_AGE_HOURS,
+    LOCAL_CITIES,
     MAX_PINS_TOTAL,
     NEWS_COUNTRIES,
     NEWS_MAX_ITEMS_PER_COUNTRY,
+    NEWS_MAX_ITEMS_PER_LOCAL_CITY,
     NEWS_MAX_RETRIES,
     NEWS_MAX_RETRY_WAIT_SEC,
     NEWS_REQUEST_DELAY_SEC,
     NEWS_REQUEST_TIMEOUT_SEC,
     NEWS_RSS_URL_TEMPLATE,
+    NEWS_SEARCH_RSS_URL_TEMPLATE,
     NOMINATIM_ACCEPT_LANGUAGE,
     NOMINATIM_DELAY_SEC,
     NOMINATIM_USER_AGENT,
@@ -152,6 +156,29 @@ def fetch_country_articles(country_label, gl, hl, ceid):
     return []
 
 
+def fetch_local_city_articles(label, query, gl, hl, ceid):
+    """Googleニュースの検索フィード(地名検索)で、その都市に関する記事を取得する。
+    国別トップニュースでは拾えない、地方メディアのローカルニュースを補う目的。"""
+    url = NEWS_SEARCH_RSS_URL_TEMPLATE.format(query=quote(query), hl=hl, gl=gl, ceid=ceid)
+
+    last_err = None
+    for attempt in range(NEWS_MAX_RETRIES + 1):
+        try:
+            resp = requests.get(url, timeout=NEWS_REQUEST_TIMEOUT_SEC, headers=NEWS_REQUEST_HEADERS)
+            resp.raise_for_status()
+            articles = _parse_news_rss(resp.content, label)
+            return articles[:NEWS_MAX_ITEMS_PER_LOCAL_CITY]
+        except Exception as e:
+            last_err = e
+            if attempt < NEWS_MAX_RETRIES:
+                wait = min(5 * (2 ** attempt), NEWS_MAX_RETRY_WAIT_SEC)
+                print(f"    [WARN] ローカルニュース取得失敗(試行{attempt + 1}, {label}): {e} -> {wait}秒待って再試行")
+                time.sleep(wait)
+
+    print(f"  [WARN] ローカルニュース取得を諦めます ({label}): {last_err}")
+    return []
+
+
 def collect_all_articles():
     all_articles = []
     seen_urls = set()
@@ -172,7 +199,27 @@ def collect_all_articles():
 
         time.sleep(NEWS_REQUEST_DELAY_SEC)
 
-    print(f"  [FETCH] 合計候補: {len(all_articles)}件")
+    print(f"  [FETCH] 国別トップニュース候補: {len(all_articles)}件")
+
+    # ローカルニュース(地名検索フィード): 首都・国全体ではなく特定都市の
+    # ローカルメディアの記事も拾えるようにする(例: 札幌のSTVなど)。
+    for city in LOCAL_CITIES:
+        label = city["label"]
+        print(f"  [FETCH-LOCAL] {label} (地名検索: {city['query']})")
+        articles = fetch_local_city_articles(label, city["query"], city["gl"], city["hl"], city["ceid"])
+
+        added = 0
+        for a in articles:
+            url = a.get("url")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                all_articles.append(a)
+                added += 1
+        print(f"          -> {added}件追加(重複除く)")
+
+        time.sleep(NEWS_REQUEST_DELAY_SEC)
+
+    print(f"  [FETCH] 合計候補(トップ+ローカル): {len(all_articles)}件")
     return all_articles
 
 
