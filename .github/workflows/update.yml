@@ -37,6 +37,15 @@ jobs:
           git fetch origin gh-pages --depth=1 2>/dev/null || true
           git show origin/gh-pages:geocode_cache.json > geocode_cache.json 2>/dev/null || echo "{}" > geocode_cache.json
 
+      # news_data.json も同様にgh-pagesから前回公開分を復元する。これが無いと
+      # 「蓄積方式」が機能せず、mainブランチのサンプルデータを毎回読むだけになり、
+      # 実際に集まった記事が毎時リセットされてしまう(実際に起きていたバグ)。
+      - name: Restore previous news_data.json from gh-pages
+        continue-on-error: true
+        run: |
+          git fetch origin gh-pages --depth=1 2>/dev/null || true
+          git show origin/gh-pages:news_data.json > news_data.json 2>/dev/null || true
+
       - name: Run pipeline
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
