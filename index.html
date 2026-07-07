@@ -324,6 +324,21 @@
         </button>
     </div>
 
+    <!-- 広告スペース(仮・PC版のみ)。スポンサー募集中であることを示すプレースホルダー枠。
+         左右の余白を使うレイアウトなので地図自体は縮めていない(zoom操作の邪魔にならないよう
+         上下にゆとりを持たせてヘッダー/ズームボタン/属性表示と被らない範囲だけに配置)。
+         スマホ幅では画面を圧迫するため lg (1024px)未満では非表示にしている。 -->
+    <div id="ad-slot-left" class="hidden lg:block fixed left-0 top-32 bottom-28 w-[120px] z-[800] pointer-events-none">
+        <div class="h-full flex items-center justify-center pointer-events-auto bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-r-xl">
+            <p class="text-xs font-semibold text-gray-400 dark:text-gray-500 text-center leading-relaxed px-2">(仮)<br>広告<br>募集予定</p>
+        </div>
+    </div>
+    <div id="ad-slot-right" class="hidden lg:block fixed right-0 top-32 bottom-28 w-[120px] z-[800] pointer-events-none">
+        <div class="h-full flex items-center justify-center pointer-events-auto bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-l-xl">
+            <p class="text-xs font-semibold text-gray-400 dark:text-gray-500 text-center leading-relaxed px-2">(仮)<br>広告<br>募集予定</p>
+        </div>
+    </div>
+
     <!-- 地図コンテナ -->
     <div id="map" role="application" aria-label="世界のニュース地図"></div>
 
@@ -899,7 +914,12 @@
             if (clusterGroup) {
                 map.removeLayer(clusterGroup);
             }
-            clusterGroup = L.markerClusterGroup({ maxClusterRadius: 55, spiderfyOnMaxZoom: true });
+            // spiderfyOnMaxZoom: 最大ズームでクラスタをクリックした際に足(スパイダー)状に
+            // 展開する機能。同じ地名に近いピンが複数あると脚が重なって見づらい、との指摘を
+            // 受けてOFFにした。個別ニュースは地図下部の「このエリアのニュース」ボタン
+            // (現在の表示範囲内の記事一覧、クラスタ状態と無関係に機能する)から見られるため、
+            // 展開できなくても閲覧手段は失われない。
+            clusterGroup = L.markerClusterGroup({ maxClusterRadius: 55, spiderfyOnMaxZoom: false });
 
             const spikyPlaces = computeSpikyPlaces();
 
