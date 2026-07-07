@@ -19,7 +19,7 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 AI_MODEL = "llama-3.3-70b-versatile"
 
 # 1回のAI呼び出しにまとめて渡す記事数。多すぎるとAIの精度が落ちるので8〜10が目安。
-ARTICLES_PER_AI_BATCH = 8
+ARTICLES_PER_AI_BATCH = 10
 
 # AI呼び出し失敗時のリトライ回数
 AI_MAX_RETRIES = 2
@@ -27,7 +27,19 @@ AI_MAX_RETRIES = 2
 # Groqのレート制限(1分あたりのリクエスト数)に引っかからないよう、バッチ間に
 # 空ける秒数。無料枠のレート制限はモデル・時期により変わるので、429が頻発する
 # ようならここを増やす(https://console.groq.com の Limits ページで確認できる)。
+# 2026-07-07: 以前はこの秒数だけ「1バッチ処理するごとに」直列で待っていたが、
+# 新規記事が多い時間帯(数千件規模)だと数百バッチ×待機秒数が積み重なり、
+# パイプライン全体が60分(cronの実行間隔)を超えて「1時間に1回のはずが3時間に
+# 1回程度しか更新されない」不具合の主因になっていた。GROQ_MAX_WORKERSによる
+# 並列実行に切り替えたため、このディレイは現在使われていない
+# (call_groq_batch側の429時リトライ待機だけで足りるため)。将来また直列方式に
+# 戻す場合のために定数自体は残してある。
 GROQ_REQUEST_DELAY_SEC = 1.2
+
+# Groqバッチ呼び出しを同時に何件まで並列実行するか。無料枠のレート制限に
+# 引っかかりにくいよう控えめな値にしてある。429が頻発するようならここを
+# 減らす、逆にもっと速くしたい/余裕があるようなら増やす。
+GROQ_MAX_WORKERS = 5
 
 # ---------------------------------------------------------------------------
 # ② ニュース取得 (Google News RSS / 無料・キー不要・国別)
@@ -196,6 +208,15 @@ LOCAL_CITIES = [
     {"label": "ダーバン", "query": "Durban", "gl": "ZA", "hl": "en-ZA", "ceid": "ZA:en"},
     {"label": "モンバサ", "query": "Mombasa", "gl": "KE", "hl": "en-KE", "ceid": "KE:en"},
     {"label": "カノ", "query": "Kano Nigeria", "gl": "NG", "hl": "en-NG", "ceid": "NG:en"},
+    # 2026-07-07: アフリカのピンが少ないとの指摘を受けて追加(ラゴス/アクラ/
+    # ダルエスサラーム/カンパラ)。都市検索フィードは国別トップニュースより
+    # 地元色の強い(≒マイナーでほのぼのした)ニュースも拾いやすい。
+    {"label": "ラゴス", "query": "Lagos Nigeria", "gl": "NG", "hl": "en-NG", "ceid": "NG:en"},
+    {"label": "アクラ", "query": "Accra", "gl": "GH", "hl": "en-GH", "ceid": "GH:en"},
+    {"label": "ダルエスサラーム", "query": "Dar es Salaam", "gl": "TZ", "hl": "en-TZ", "ceid": "TZ:en"},
+    {"label": "カンパラ", "query": "Kampala", "gl": "UG", "hl": "en-UG", "ceid": "UG:en"},
+    # --- アフリカ北部(追加) ---
+    {"label": "カサブランカ", "query": "Casablanca", "gl": "MA", "hl": "fr", "ceid": "MA:fr"},
     # --- 西欧 ---
     {"label": "マンチェスター", "query": "Manchester", "gl": "GB", "hl": "en-GB", "ceid": "GB:en"},
     {"label": "グラスゴー", "query": "Glasgow", "gl": "GB", "hl": "en-GB", "ceid": "GB:en"},
@@ -217,6 +238,15 @@ LOCAL_CITIES = [
     {"label": "レシフェ", "query": "Recife", "gl": "BR", "hl": "pt-BR", "ceid": "BR:pt-419"},
     {"label": "ポルトアレグレ", "query": "Porto Alegre", "gl": "BR", "hl": "pt-BR", "ceid": "BR:pt-419"},
     {"label": "コルドバ", "query": "Córdoba Argentina", "gl": "AR", "hl": "es-419", "ceid": "AR:es-419"},
+    # 2026-07-07: 南アメリカのピンが少ないとの指摘を受けて追加(サルバドール/
+    # メデジン/グアヤキル/バルパライソ/グアテマラシティ)。グアテマラは
+    # NEWS_COUNTRIESに国別トップニュースが無いので、この都市検索フィードが
+    # 唯一の取得元になる。
+    {"label": "サルバドール", "query": "Salvador Bahia", "gl": "BR", "hl": "pt-BR", "ceid": "BR:pt-419"},
+    {"label": "メデジン", "query": "Medellín", "gl": "CO", "hl": "es-419", "ceid": "CO:es-419"},
+    {"label": "グアヤキル", "query": "Guayaquil", "gl": "EC", "hl": "es-419", "ceid": "EC:es-419"},
+    {"label": "バルパライソ", "query": "Valparaíso", "gl": "CL", "hl": "es-419", "ceid": "CL:es-419"},
+    {"label": "グアテマラシティ", "query": "Ciudad de Guatemala", "gl": "GT", "hl": "es-419", "ceid": "GT:es-419"},
     # --- オセアニア ---
     {"label": "メルボルン", "query": "Melbourne", "gl": "AU", "hl": "en-AU", "ceid": "AU:en"},
     {"label": "ブリスベン", "query": "Brisbane", "gl": "AU", "hl": "en-AU", "ceid": "AU:en"},
@@ -235,18 +265,21 @@ LOCAL_CITIES = [
 # 割り振られるかはAIが記事内容から判定する(ai_region)。
 # また、この数字は「1回の実行(1時間ごと)で新しく採用したい件数」の目安であって、
 # 地図の合計ピン数の目安ではない(合計は蓄積されるためMAX_PINS_TOTALに近づいていく)。
+# 2026-07-07: 地図を見たユーザーから「アフリカ・南米(中南米)が少ない」との指摘を
+# 受けて再配分した。北米・西欧・その他一部地域のノルマを減らし、その分を
+# アフリカ北部・アフリカ南部東部・中南米に上乗せしている(合計は引き続き1000)。
 REGION_QUOTAS = {
     "日本": 90,
-    "東アジア": 90,
-    "東南アジア": 70,
-    "南アジア": 70,
-    "中東": 90,
-    "アフリカ北部": 50,
-    "アフリカ南部・東部": 110,
-    "西欧": 110,
-    "東欧・ロシア": 70,
-    "北米": 130,
-    "中南米": 70,
+    "東アジア": 80,
+    "東南アジア": 65,
+    "南アジア": 65,
+    "中東": 80,
+    "アフリカ北部": 70,
+    "アフリカ南部・東部": 150,
+    "西欧": 90,
+    "東欧・ロシア": 60,
+    "北米": 90,
+    "中南米": 110,
     "オセアニア": 50,
 }
 
