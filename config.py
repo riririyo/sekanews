@@ -22,7 +22,7 @@ AI_MODEL = "llama-3.3-70b-versatile"
 ARTICLES_PER_AI_BATCH = 10
 
 # AI呼び出し失敗時のリトライ回数
-AI_MAX_RETRIES = 2
+AI_MAX_RETRIES = 5
 
 # Groqのレート制限(1分あたりのリクエスト数)に引っかからないよう、バッチ間に
 # 空ける秒数。無料枠のレート制限はモデル・時期により変わるので、429が頻発する
@@ -39,7 +39,18 @@ GROQ_REQUEST_DELAY_SEC = 1.2
 # Groqバッチ呼び出しを同時に何件まで並列実行するか。無料枠のレート制限に
 # 引っかかりにくいよう控えめな値にしてある。429が頻発するようならここを
 # 減らす、逆にもっと速くしたい/余裕があるようなら増やす。
-GROQ_MAX_WORKERS = 5
+GROQ_MAX_WORKERS = 2
+
+# 2026-07-07: 1回の実行でAI(Groq)判定にかける新規記事数の上限。
+# 無料枠にはリクエスト毎分/トークン毎分/1日あたりの上限があり、5並列で数百バッチを
+# 一気に投げたところ大量に429(レート制限)が発生し、実際のrun #31では271バッチ中
+# 100件以上が処理されずに捨てられていた。並列数を2に絞り+429時にRetry-Afterを
+# 尊重するリトライに変えたうえで、そもそも1回で投げる件数をこの値で頭打ちにする。
+# ピンは48時間かけて蓄積される設計なので、1回の取り込みを絞っても地図全体の
+# ピン数・地域バランスは回を重ねて埋まっていく(=毎時更新・地域網羅性は維持される)。
+# 上限に達したときはシャッフルしてから切り詰めるため、国別トップニュースだけでなく
+# アフリカ・中南米などローカルフィード由来の記事も均等に生き残る。
+MAX_NEW_ARTICLES_PER_RUN = 300
 
 # ---------------------------------------------------------------------------
 # ② ニュース取得 (Google News RSS / 無料・キー不要・国別)
@@ -178,7 +189,7 @@ NEWS_COUNTRIES = [
 NEWS_SEARCH_RSS_URL_TEMPLATE = "https://news.google.com/rss/search?q={query}&hl={hl}&gl={gl}&ceid={ceid}"
 
 # 検索フィード1件あたりの読み込み記事数上限(国別トップニュースより少なめでよい)。
-NEWS_MAX_ITEMS_PER_LOCAL_CITY = 20
+NEWS_MAX_ITEMS_PER_LOCAL_CITY = 30
 
 LOCAL_CITIES = [
     # --- 日本 ---
@@ -251,6 +262,64 @@ LOCAL_CITIES = [
     {"label": "メルボルン", "query": "Melbourne", "gl": "AU", "hl": "en-AU", "ceid": "AU:en"},
     {"label": "ブリスベン", "query": "Brisbane", "gl": "AU", "hl": "en-AU", "ceid": "AU:en"},
     {"label": "クライストチャーチ", "query": "Christchurch", "gl": "NZ", "hl": "en-NZ", "ceid": "NZ:en"},
+    # ===== 2026-07-07 追加分: 「知らない街のローカルな話題」を厚くするための二番手・地方都市 =====
+    # --- 日本 ---
+    {"label": "金沢", "query": "金沢", "gl": "JP", "hl": "ja", "ceid": "JP:ja"},
+    {"label": "松山", "query": "松山 愛媛", "gl": "JP", "hl": "ja", "ceid": "JP:ja"},
+    {"label": "鹿児島", "query": "鹿児島", "gl": "JP", "hl": "ja", "ceid": "JP:ja"},
+    {"label": "新潟", "query": "新潟", "gl": "JP", "hl": "ja", "ceid": "JP:ja"},
+    # --- 東アジア ---
+    {"label": "青島", "query": "青岛", "gl": "CN", "hl": "zh-Hans", "ceid": "CN:zh-Hans"},
+    {"label": "大連", "query": "大连", "gl": "CN", "hl": "zh-Hans", "ceid": "CN:zh-Hans"},
+    {"label": "台中", "query": "台中", "gl": "TW", "hl": "zh-Hant", "ceid": "TW:zh-Hant"},
+    {"label": "大邱", "query": "대구", "gl": "KR", "hl": "ko", "ceid": "KR:ko"},
+    # --- 東南アジア ---
+    {"label": "バンドン", "query": "Bandung", "gl": "ID", "hl": "id", "ceid": "ID:id"},
+    {"label": "ジョグジャカルタ", "query": "Yogyakarta", "gl": "ID", "hl": "id", "ceid": "ID:id"},
+    {"label": "プーケット", "query": "Phuket", "gl": "TH", "hl": "th", "ceid": "TH:th"},
+    {"label": "ダバオ", "query": "Davao", "gl": "PH", "hl": "en-PH", "ceid": "PH:en"},
+    {"label": "ペナン", "query": "Penang", "gl": "MY", "hl": "en-MY", "ceid": "MY:en"},
+    # --- 南アジア ---
+    {"label": "チェンナイ", "query": "Chennai", "gl": "IN", "hl": "en-IN", "ceid": "IN:en"},
+    {"label": "ラホール", "query": "Lahore", "gl": "PK", "hl": "en-PK", "ceid": "PK:en"},
+    {"label": "キャンディ", "query": "Kandy Sri Lanka", "gl": "LK", "hl": "en-LK", "ceid": "LK:en"},
+    # --- 中東 ---
+    {"label": "アンタルヤ", "query": "Antalya", "gl": "TR", "hl": "tr", "ceid": "TR:tr"},
+    {"label": "ハイファ", "query": "Haifa", "gl": "IL", "hl": "en-IL", "ceid": "IL:en"},
+    {"label": "シャルジャ", "query": "Sharjah", "gl": "AE", "hl": "en-AE", "ceid": "AE:en"},
+    # --- アフリカ ---
+    {"label": "プレトリア", "query": "Pretoria", "gl": "ZA", "hl": "en-ZA", "ceid": "ZA:en"},
+    {"label": "クマシ", "query": "Kumasi", "gl": "GH", "hl": "en-GH", "ceid": "GH:en"},
+    {"label": "アルーシャ", "query": "Arusha", "gl": "TZ", "hl": "en-TZ", "ceid": "TZ:en"},
+    {"label": "ダカール", "query": "Dakar", "gl": "SN", "hl": "fr", "ceid": "SN:fr"},
+    {"label": "アビジャン", "query": "Abidjan", "gl": "CI", "hl": "fr", "ceid": "CI:fr"},
+    # --- 西欧 ---
+    {"label": "リヨン", "query": "Lyon", "gl": "FR", "hl": "fr", "ceid": "FR:fr"},
+    {"label": "ナポリ", "query": "Napoli", "gl": "IT", "hl": "it", "ceid": "IT:it"},
+    {"label": "セビリア", "query": "Sevilla", "gl": "ES", "hl": "es", "ceid": "ES:es"},
+    {"label": "ハンブルク", "query": "Hamburg", "gl": "DE", "hl": "de", "ceid": "DE:de"},
+    {"label": "リヴァプール", "query": "Liverpool", "gl": "GB", "hl": "en-GB", "ceid": "GB:en"},
+    {"label": "ポルト", "query": "Porto", "gl": "PT", "hl": "pt-PT", "ceid": "PT:pt-150"},
+    # --- 東欧・ロシア ---
+    {"label": "カザン", "query": "Казань", "gl": "RU", "hl": "ru", "ceid": "RU:ru"},
+    {"label": "クラクフ", "query": "Kraków", "gl": "PL", "hl": "pl", "ceid": "PL:pl"},
+    {"label": "リヴィウ", "query": "Львів", "gl": "UA", "hl": "uk", "ceid": "UA:uk"},
+    # --- 北米 ---
+    {"label": "フィラデルフィア", "query": "Philadelphia", "gl": "US", "hl": "en-US", "ceid": "US:en"},
+    {"label": "オースティン", "query": "Austin Texas", "gl": "US", "hl": "en-US", "ceid": "US:en"},
+    {"label": "デンバー", "query": "Denver", "gl": "US", "hl": "en-US", "ceid": "US:en"},
+    {"label": "カルガリー", "query": "Calgary", "gl": "CA", "hl": "en-CA", "ceid": "CA:en"},
+    {"label": "モンテレイ", "query": "Monterrey", "gl": "MX", "hl": "es-419", "ceid": "MX:es-419"},
+    # --- 中南米 ---
+    {"label": "クリチバ", "query": "Curitiba", "gl": "BR", "hl": "pt-BR", "ceid": "BR:pt-419"},
+    {"label": "ロサリオ", "query": "Rosario Argentina", "gl": "AR", "hl": "es-419", "ceid": "AR:es-419"},
+    {"label": "カリ", "query": "Cali Colombia", "gl": "CO", "hl": "es-419", "ceid": "CO:es-419"},
+    {"label": "アレキパ", "query": "Arequipa", "gl": "PE", "hl": "es-419", "ceid": "PE:es-419"},
+    {"label": "プエブラ", "query": "Puebla", "gl": "MX", "hl": "es-419", "ceid": "MX:es-419"},
+    # --- オセアニア ---
+    {"label": "パース", "query": "Perth Australia", "gl": "AU", "hl": "en-AU", "ceid": "AU:en"},
+    {"label": "アデレード", "query": "Adelaide", "gl": "AU", "hl": "en-AU", "ceid": "AU:en"},
+    {"label": "オークランド", "query": "Auckland", "gl": "NZ", "hl": "en-NZ", "ceid": "NZ:en"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -268,6 +337,15 @@ LOCAL_CITIES = [
 # 2026-07-07: 地図を見たユーザーから「アフリカ・南米(中南米)が少ない」との指摘を
 # 受けて再配分した。北米・西欧・その他一部地域のノルマを減らし、その分を
 # アフリカ北部・アフリカ南部東部・中南米に上乗せしている(合計は引き続き1000)。
+# 2026-07-07: 各地域のノルマ枠のうち、どれくらいを「ローカルフィード(LOCAL_CITIES=
+# 都市名検索。地方紙・地元の話題・お店の開店など、いわゆるトップニュース以外)」由来の
+# 記事に優先的に割り当てるかの比率(0〜1)。残りは国別トップニュース(NEWS_COUNTRIES=
+# トランプの言動・ホルムズ海峡・経済危機のような硬派な大ニュース)に確保される。
+# どちらかの候補が足りない地域では、余った枠は自動的にもう一方で埋める(枠は無駄にしない)。
+# 0.6 = ローカル6割・トップ4割を目安に選抜。もっとローカル寄りにしたければ0.7〜0.8へ、
+# トップを厚くしたければ下げる。
+LOCAL_SELECT_RATIO = 0.6
+
 REGION_QUOTAS = {
     "日本": 90,
     "東アジア": 80,
@@ -377,6 +455,18 @@ REAL_IMAGE_FETCH_MAX_BYTES = 65536
 # 新規記事が多い回でも、逐次実行で合計時間が伸びすぎてパイプライン全体が
 # 60分(cronの実行間隔)を超えないようにするための対策。
 REAL_IMAGE_FETCH_MAX_WORKERS = 10
+
+# 2026-07-07: og:image取得が本番で0%成功だった原因は、Google News RSSのlinkが
+# 実記事ではなく「JavaScriptで最終URLへ飛ぶ中継ページ」で、requestsのHTTPリダイレクト
+# 追跡だけでは実記事に到達できず、中継ページ自体にog:imageが無いためだった
+# (run #31のログでも失敗17件が全て no_og_image_tag)。そこで画像取得の前に
+# Googleの内部エンドポイントで中継URLを実記事URLへ解決する処理を挟む。
+# Trueで有効。Google側の仕様変更で解決が壊れた場合はFalseにすれば従来動作
+# (画像なし)に戻せる。
+RESOLVE_GOOGLE_NEWS_URLS = True
+
+# 中継URLの解決(2リクエスト発生する)1回あたりのタイムアウト秒数。
+GOOGLE_NEWS_RESOLVE_TIMEOUT_SEC = 8
 
 # 自動更新の実行間隔(分)。.github/workflows/update.yml のcron設定(現在は毎時0分=60分間隔)
 # と必ず合わせること。フロント側で「次回更新予定」を計算するために news_data.json に

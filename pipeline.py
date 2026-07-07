@@ -30,7 +30,7 @@ import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import requests
 
@@ -46,7 +46,9 @@ from config import (
     GROQ_MAX_WORKERS,
     GROQ_REQUEST_DELAY_SEC,
     ITEM_MAX_AGE_HOURS,
+    GOOGLE_NEWS_RESOLVE_TIMEOUT_SEC,
     LOCAL_CITIES,
+    MAX_NEW_ARTICLES_PER_RUN,
     MAX_PINS_TOTAL,
     NEWS_COUNTRIES,
     NEWS_MAX_ITEMS_PER_COUNTRY,
@@ -65,6 +67,8 @@ from config import (
     REAL_IMAGE_FETCH_MAX_BYTES,
     REAL_IMAGE_FETCH_MAX_WORKERS,
     REAL_IMAGE_FETCH_TIMEOUT_SEC,
+    RESOLVE_GOOGLE_NEWS_URLS,
+    LOCAL_SELECT_RATIO,
     REGION_QUOTAS,
     SENSITIVE_KEYWORDS,
     SPONSOR_PINS,
@@ -207,6 +211,7 @@ def collect_all_articles():
             url = a.get("url")
             if url and url not in seen_urls:
                 seen_urls.add(url)
+                a["_source_type"] = "top"  # 国別トップニュース由来
                 all_articles.append(a)
                 added += 1
         print(f"          -> {added}件追加(重複除く)")
@@ -227,6 +232,7 @@ def collect_all_articles():
             url = a.get("url")
             if url and url not in seen_urls:
                 seen_urls.add(url)
+                a["_source_type"] = "local"  # 都市名検索(ローカル)由来
                 all_articles.append(a)
                 added += 1
         print(f"          -> {added}件追加(重複除く)")
@@ -311,6 +317,23 @@ def call_groq_batch(batch):
     for attempt in range(AI_MAX_RETRIES + 1):
         try:
             resp = requests.post(GROQ_ENDPOINT, headers=headers, json=payload, timeout=30)
+            # 429(レート制限)は別扱いにする。Groqが返す Retry-After
+            # (待つべき秒数)ヘッダーがあればその秒数だけ待ってから再試行することで、
+            # 盲目的な短いリトライでリトライ回数を使い果たしてバッチを丸ごと落とす(run #31での)
+            # 失敗を防ぐ。Retry-Afterが無い場合は指数バックオフで待つ。
+            if resp.status_code == 429:
+                retry_after = resp.headers.get("Retry-After", "")
+                try:
+                    wait = float(retry_after)
+                except (TypeError, ValueError):
+                    wait = min(2 ** (attempt + 1), 30)
+                wait = min(max(wait, 1.0), 60.0)
+                last_err = RuntimeError(f"HTTP 429 (rate limit), Retry-After={retry_after or 'なし'}")
+                if attempt < AI_MAX_RETRIES:
+                    print(f"  [WARN] Groqレート制限(429, 試行{attempt + 1}) -> {wait:.0f}秒待って再試行")
+                    time.sleep(wait)
+                    continue
+                break
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
             parsed = json.loads(content)
@@ -321,9 +344,10 @@ def call_groq_batch(batch):
         except Exception as e:
             # Authorizationヘッダーやペイロード本文はログに出さない(APIキー漏洩防止)。
             last_err = e
-            wait = 2 * (attempt + 1)
-            print(f"  [WARN] Groq呼び出し失敗(試行{attempt + 1}): {type(e).__name__}: {e} -> {wait}秒待って再試行")
-            time.sleep(wait)
+            if attempt < AI_MAX_RETRIES:
+                wait = min(2 ** (attempt + 1), 30)
+                print(f"  [WARN] Groq呼び出し失敗(試行{attempt + 1}): {type(e).__name__}: {e} -> {wait}秒待って再試行")
+                time.sleep(wait)
 
     raise RuntimeError(f"Groq呼び出しが{AI_MAX_RETRIES + 1}回とも失敗: {last_err}")
 
@@ -457,6 +481,38 @@ def dedup_similar_titles(items):
     return kept
 
 
+def _split_by_ratio(primary, secondary, total, primary_ratio):
+    """primary(優先したいグループ)とsecondary(確保したいグループ)から合計total件を、
+    primary_ratioの比率でバランスよく採る。どちらかが足りなければ、余った枠はもう一方で
+    埋める(枠を無駄にしない)。各グループ内はシャッフルして公平に選ぶ。
+    ここでは primary=ローカル記事 / secondary=トップニュース として使い、
+    「ローカルを厚く採りつつ、トップニュースの枠も必ず確保する」ために用いる。"""
+    if total <= 0:
+        return []
+    p = primary[:]
+    s = secondary[:]
+    random.shuffle(p)
+    random.shuffle(s)
+
+    p_target = int(round(total * primary_ratio))
+    s_target = total - p_target
+
+    picked_p = p[:p_target]
+    picked_s = s[:s_target]
+
+    # どちらかが目標に届かなければ、残り枠をもう一方の余りで補充する。
+    remaining = total - len(picked_p) - len(picked_s)
+    if remaining > 0:
+        leftover = p[len(picked_p):] + s[len(picked_s):]
+        random.shuffle(leftover)
+        picked = picked_p + picked_s + leftover[:remaining]
+    else:
+        picked = picked_p + picked_s
+
+    random.shuffle(picked)  # トップとローカルが固まらないよう最後に混ぜる
+    return picked
+
+
 def select_by_region_quota(enriched):
     by_region = {}
     for a in enriched:
@@ -465,19 +521,18 @@ def select_by_region_quota(enriched):
     selected = []
     for region, quota in REGION_QUOTAS.items():
         candidates = by_region.get(region, [])
-        # 2026-07-07: 以前は「候補リストの先頭からquota件」を機械的に採用していた。
-        # collect_all_articles()はNEWS_COUNTRIES(国別トップニュース=硬めの全国ニュース)
-        # を先に集め、LOCAL_CITIES(都市検索=もっとマイナーで地元色のあるニュース)を
-        # 後から追加するため、この「先頭優先」だと硬いニュースが常にノルマを埋め尽くし、
-        # 動物の話題や開店・変わった事件などの人間味のあるニュースがほぼ選ばれない、
-        # という偏りが起きていた(ユーザー指摘: 「もっとマイナーなニュースも入れてほしい」)。
-        # シャッフルしてから採用することで、取得元(国別/ローカル都市)に関わらず
-        # 公平にノルマ選抜されるようにする。
-        shuffled = candidates[:]
-        random.shuffle(shuffled)
-        picked = shuffled[:quota]
+        # 2026-07-07: ノルマ枠を「ローカル(都市検索由来)」と「トップ(国別トップニュース由来)」に
+        # LOCAL_SELECT_RATIOの比率で配分して選抜する。これにより、トランプの言動・ホルムズ海峡・
+        # 経済危機のような硬派な大ニュース(トップ)の枠を必ず確保しつつ、知らない街の開店・
+        # 地元の話題のようなローカルニュースを厚めに採れる。どちらかの候補が足りない地域では
+        # 余った枠をもう一方で埋めるので、枠は無駄にならない。
+        local_cands = [a for a in candidates if a.get("_source_type") == "local"]
+        top_cands = [a for a in candidates if a.get("_source_type") != "local"]
+        picked = _split_by_ratio(local_cands, top_cands, quota, LOCAL_SELECT_RATIO)
         selected.extend(picked)
-        print(f"  [SELECT] {region}: {len(picked)}/{quota}件")
+        n_local = sum(1 for a in picked if a.get("_source_type") == "local")
+        n_top = len(picked) - n_local
+        print(f"  [SELECT] {region}: {len(picked)}/{quota}件 (ローカル{n_local}/トップ{n_top})")
 
     selected = dedup_similar_titles(selected)
     print(f"  [SELECT] 今回の新規選抜: {len(selected)}件")
@@ -568,6 +623,77 @@ def _valid_http_url(url):
     return isinstance(url, str) and (url.startswith("http://") or url.startswith("https://"))
 
 
+def _resolve_google_news_url(url):
+    """Google Newsの中継URL(news.google.com/rss/articles/... や /read/...)を、
+    実際の記事ページのURLに解決する。Google News RSSのlinkはJavaScriptで最終URLへ
+    飛ぶ中継ページで、requestsのHTTPリダイレクト追跡だけでは実記事に到達できない
+    (中継ページ自体にはog:imageが無いので、従来はog:image取得が常に失敗していた)。
+    Googleの内部エンドポイント(batchexecute)を使って最終URLを取り出す。
+
+    ※これはGoogleの公開APIではなく内部実装に依存するため、Google側の仕様変更で
+      将来動かなくなる可能性がある。その場合でも例外を握りつぶしてNoneを返し、
+      パイプライン全体は止めず「画像なし」に自然にフォールバックする
+      (config.py の RESOLVE_GOOGLE_NEWS_URLS を False にすれば無効化できる)。
+
+    解決できたら実URL文字列、できなければNoneを返す。中継URLでなければ元のurlを返す。"""
+    try:
+        parsed = urlparse(url)
+        if parsed.hostname not in ("news.google.com",):
+            return url  # そもそもGoogle News中継URLでなければそのまま
+        parts = [p for p in parsed.path.split("/") if p]
+        if len(parts) < 2 or parts[-2] not in ("articles", "read"):
+            return url
+        article_id = parts[-1]
+
+        # ステップ1: 中継ページを取得し、batchexecuteに必要な署名(sig)と
+        # タイムスタンプ(ts)を抜き出す。
+        r = requests.get(
+            f"https://news.google.com/rss/articles/{article_id}",
+            headers=NEWS_REQUEST_HEADERS,
+            timeout=GOOGLE_NEWS_RESOLVE_TIMEOUT_SEC,
+        )
+        if r.status_code != 200:
+            return None
+        sig_m = re.search(r'data-n-a-sg="([^"]+)"', r.text)
+        ts_m = re.search(r'data-n-a-ts="([^"]+)"', r.text)
+        if not sig_m or not ts_m:
+            return None
+        signature = sig_m.group(1)
+        timestamp = ts_m.group(1)
+
+        # ステップ2: batchexecuteに問い合わせて最終URLを得る。
+        inner = json.dumps([
+            "garturlreq",
+            [["X", "X", ["X", "X"], None, None, 1, 1, "US:en", None, 1, None, None, None, None, None, 0, 1],
+             "X", "X", 1, [1, 1, 1], 1, 1, None, 0, 0, None, 0],
+            article_id, int(timestamp), signature,
+        ])
+        freq = json.dumps([[["Fbv4je", inner, None, "generic"]]])
+        resp = requests.post(
+            "https://news.google.com/_/DotsSplashUi/data/batchexecute",
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                "User-Agent": NEWS_REQUEST_HEADERS["User-Agent"],
+            },
+            data={"f.req": freq},
+            timeout=GOOGLE_NEWS_RESOLVE_TIMEOUT_SEC,
+        )
+        if resp.status_code != 200:
+            return None
+        # レスポンスは )]}' で始まる特殊なJSON。実URLは "garturlres" の直後に入る。
+        text = resp.text
+        m = re.search(r'\\"garturlres\\",\\"(http[^\\"]+)\\"', text)
+        if m:
+            return m.group(1).encode("utf-8").decode("unicode_escape")
+        # フォールバック: エスケープされたhttp(s) URLを素朴に拾う。
+        m2 = re.search(r'(https?:\\/\\/[^\\"]+)', text)
+        if m2:
+            return m2.group(1).replace("\\/", "/")
+        return None
+    except Exception:
+        return None
+
+
 def fetch_real_article_image(url):
     """記事ページ(Google Newsの中継URLの先)からog:image(実際の記事のSNSシェア画像)を
     軽量に取得する。記事全文をダウンロードする必要はなく、通常<head>付近にog:imageが
@@ -585,9 +711,18 @@ def fetch_real_article_image(url):
     if not _valid_http_url(url):
         return None, "invalid_url"
 
+    # Google Newsの中継URLは実記事へJavaScriptで飛ぶだけでog:imageを持たないため、
+    # まず実記事URLへ解決する(解決できなければog:imageは取りようがないので理由を明示)。
+    target_url = url
+    if RESOLVE_GOOGLE_NEWS_URLS and "news.google.com" in url:
+        resolved = _resolve_google_news_url(url)
+        if not resolved or not _valid_http_url(resolved) or "news.google.com" in resolved:
+            return None, "gnews_resolve_failed"
+        target_url = resolved
+
     try:
         resp = requests.get(
-            url,
+            target_url,
             timeout=REAL_IMAGE_FETCH_TIMEOUT_SEC,
             headers=NEWS_REQUEST_HEADERS,
             allow_redirects=True,
@@ -860,6 +995,22 @@ def main():
     skipped_known = before_dedup_count - len(articles)
     if skipped_known:
         print(f"  [DEDUP] 前回までに処理済みの記事を除外: {skipped_known}件 (新規候補{len(articles)}件)")
+
+    # 2026-07-07: Groq無料枠(トークン毎分/1日あたりのリクエスト数)と、1時間ごとの
+    # 実行サイクル(60分)に収めるため、1回でAI判定にかける新規記事数に上限を設ける。
+    # シャッフルしてから切り詰めることで、国別トップニュース(先頭)だけでなく
+    # アフリカ・中南米などローカルフィード由来の記事も均等に残す。
+    if len(articles) > MAX_NEW_ARTICLES_PER_RUN:
+        before_cap = len(articles)
+        # 単純なシャッフル切り詰めだと、候補数で圧倒的に多いトップニュースばかりが残り、
+        # 数の少ないローカル記事がAI判定に到達しにくい。LOCAL_SELECT_RATIOと同じ比率で
+        # ローカルを優先的に残しつつトップの枠も確保して切り詰める(最終選抜と方針を揃える)。
+        local_cands = [a for a in articles if a.get("_source_type") == "local"]
+        top_cands = [a for a in articles if a.get("_source_type") != "local"]
+        articles = _split_by_ratio(local_cands, top_cands, MAX_NEW_ARTICLES_PER_RUN, LOCAL_SELECT_RATIO)
+        n_local = sum(1 for a in articles if a.get("_source_type") == "local")
+        print(f"  [LIMIT] 新規候補{before_cap}件をGroq無料枠に合わせて{len(articles)}件に制限"
+              f"(ローカル{n_local}/トップ{len(articles) - n_local})")
 
     print("=== ③ AI要約・ジャンル・地名判定・タイトル和訳 (Groq) ===")
     if articles:
