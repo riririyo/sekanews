@@ -321,6 +321,13 @@
                                aria-label="ニュースをキーワードで検索">
                     </div>
                 </div>
+                <div class="w-full md:w-auto shrink-0">
+                    <button id="recent-toggle" type="button" onclick="toggleRecentOnly()"
+                            class="w-full md:w-auto flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-full border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                            aria-pressed="false" aria-label="直近1時間の新着ニュースのみ表示を切り替え">
+                        <i class="ph ph-clock-countdown text-sm" aria-hidden="true"></i> 直近1時間
+                    </button>
+                </div>
             </div>
 
             <!-- 凡例(データから動的に生成。クリックでジャンルの表示/非表示を切り替え) -->
@@ -598,12 +605,24 @@
         let allCategoriesSet = new Set(); // データ中に実際に存在する全ジャンル(ソロ解除時に使う)
         let searchQuery = '';
 
+        // 2026-07-08: 「直近1時間で追加されたニュースだけ見たい」という要望を受けて追加した
+        // フィルタ用の状態。trueの間はmatchesFilter内でfirstSeenAtが1時間以内のものだけを
+        // 通す(ヘッダーのトグルボタンで切り替える)。
+        let showRecentOnly = false;
+        const RECENT_WINDOW_MS = 60 * 60 * 1000;
+
         function matchesFilter(news) {
             if (activeCategories && !activeCategories.has(news.category)) return false;
             if (searchQuery) {
                 const q = searchQuery.toLowerCase();
                 const haystack = `${news.title || ''} ${news.originalTitle || ''} ${news.aiSummary || ''} ${news.location.name || ''}`.toLowerCase();
                 if (!haystack.includes(q)) return false;
+            }
+            if (showRecentOnly) {
+                const ts = news.firstSeenAt || news.publishedAt;
+                if (!ts) return false;
+                const ageMs = Date.now() - new Date(ts).getTime();
+                if (ageMs > RECENT_WINDOW_MS) return false;
             }
             return true;
         }
@@ -624,6 +643,22 @@
             }
             buildLegend();
             renderMap();
+        };
+
+        window.toggleRecentOnly = function () {
+            showRecentOnly = !showRecentOnly;
+            const btn = document.getElementById('recent-toggle');
+            if (btn) {
+                btn.setAttribute('aria-pressed', String(showRecentOnly));
+                btn.classList.toggle('bg-gray-800', showRecentOnly);
+                btn.classList.toggle('dark:bg-gray-100', showRecentOnly);
+                btn.classList.toggle('text-white', showRecentOnly);
+                btn.classList.toggle('dark:text-gray-900', showRecentOnly);
+                btn.classList.toggle('border-gray-800', showRecentOnly);
+                btn.classList.toggle('dark:border-gray-100', showRecentOnly);
+            }
+            renderMap();
+            updateVisibleNewsCount();
         };
 
         // --- 急上昇エリア検知(大島てる方式): 直近24時間で同じ地名にピンが
@@ -919,8 +954,12 @@
         // 近づいたら(ズームインしたら)カーソルを乗せなくてもピンのタイトルが見えるように
         // する機能。このズームレベル以上で#mapにmap-titles-visibleクラスを付け、
         // permanent:trueで常時DOM上にあるtooltip(rich-tooltip)をCSS側で表示させる。
-        // クラスタが解けて個別ピンが見分けられる程度の近さの目安として8にしてある。
-        const TOOLTIP_ALWAYS_VISIBLE_ZOOM = 8;
+        // 2026-07-08: クラスタリングを完全廃止したのに合わせて、以前の「クラスタが解けて
+        // 個別ピンが見分けられる程度」という基準ではなく、ヨーロッパ全体が収まる程度の
+        // 広い表示(ズーム4前後)でもタイトルが見えるようにしてほしい、との要望を受けて
+        // 大きく下げた。値が小さいほど広い範囲でタイトルが常時表示されるが、密集地域では
+        // ラベル同士が重なりやすくなるトレードオフがある。
+        const TOOLTIP_ALWAYS_VISIBLE_ZOOM = 4;
         function updateTooltipVisibility() {
             const mapEl = document.getElementById('map');
             mapEl.classList.toggle('map-titles-visible', map.getZoom() >= TOOLTIP_ALWAYS_VISIBLE_ZOOM);
@@ -933,12 +972,12 @@
             if (clusterGroup) {
                 map.removeLayer(clusterGroup);
             }
-            // spiderfyOnMaxZoom: 最大ズームでクラスタをクリックした際に足(スパイダー)状に
-            // 展開する機能。同じ地名に近いピンが複数あると脚が重なって見づらい、との指摘を
-            // 受けてOFFにした。個別ニュースは地図下部の「このエリアのニュース」ボタン
-            // (現在の表示範囲内の記事一覧、クラスタ状態と無関係に機能する)から見られるため、
-            // 展開できなくても閲覧手段は失われない。
-            clusterGroup = L.markerClusterGroup({ maxClusterRadius: 55, spiderfyOnMaxZoom: false });
+            // 2026-07-07: クラスタリング機能(近いピンを丸めて件数だけ表示する方式)自体を
+            // 完全に廃止した。以前はspiderfyOnMaxZoomをOFFにするだけの対応だったが、
+            // クラスタ表示(件数の丸い玉)自体が見づらい・タイトルがすぐ見えない、との
+            // 指摘を受けて、常にすべてのピンを個別マーカーとして表示するL.layerGroup()に
+            // 変更した(変数名clusterGroupは他の参照箇所を変えずに済むようそのまま流用)。
+            clusterGroup = L.layerGroup();
 
             const spikyPlaces = computeSpikyPlaces();
 
