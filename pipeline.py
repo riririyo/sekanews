@@ -21,6 +21,7 @@ import difflib
 import json
 import math
 import os
+import random
 import re
 import sys
 import time
@@ -42,6 +43,7 @@ from config import (
     GENRE_COLORS,
     GEOCODE_CACHE_FILE,
     GROQ_API_KEY,
+    GROQ_MAX_WORKERS,
     GROQ_REQUEST_DELAY_SEC,
     ITEM_MAX_AGE_HOURS,
     LOCAL_CITIES,
@@ -337,59 +339,90 @@ def _is_sensitive_title(title):
     return False
 
 
-def enrich_articles_with_ai(articles):
-    enriched = []
-    total_batches = (len(articles) + ARTICLES_PER_AI_BATCH - 1) // ARTICLES_PER_AI_BATCH
-    blocked_sensitive = 0
+def _process_ai_batch(batch, batch_num, total_batches):
+    """1バッチ分のGroq呼び出し+結果検証をまとめて行う。並列実行(ThreadPoolExecutor)
+    から呼ばれる前提で、副作用(print以外)を持たない純粋な処理として切り出してある。
+    戻り値: (このバッチで採用できた記事のリスト, センシティブ判定で弾いた件数)"""
+    print(f"  [AI] バッチ {batch_num}/{total_batches} ({len(batch)}件)")
 
-    for b in range(total_batches):
-        start = b * ARTICLES_PER_AI_BATCH
-        batch = articles[start:start + ARTICLES_PER_AI_BATCH]
-        print(f"  [AI] バッチ {b + 1}/{total_batches} ({len(batch)}件)")
+    try:
+        results = call_groq_batch(batch)
+    except Exception as e:
+        print(f"  [SKIP] バッチ{batch_num}を諦めて次へ: {e}")
+        print(f"         詳細: {traceback.format_exc(limit=2)}")
+        return [], 0
 
-        try:
-            results = call_groq_batch(batch)
-        except Exception as e:
-            print(f"  [SKIP] バッチ{b + 1}を諦めて次へ: {e}")
-            print(f"         詳細: {traceback.format_exc(limit=2)}")
+    batch_enriched = []
+    blocked = 0
+
+    for r in results:
+        idx = r.get("index")
+        if not isinstance(idx, int) or not (0 <= idx < len(batch)):
+            continue
+        article = batch[idx]
+
+        if _is_sensitive_title(article.get("title", "")):
+            blocked += 1
             continue
 
-        for r in results:
-            idx = r.get("index")
-            if not isinstance(idx, int) or not (0 <= idx < len(batch)):
+        genre = r.get("genre") or ""
+        region = r.get("region") or ""
+        place = (r.get("place") or "").strip()
+        title_ja = (r.get("title_ja") or "").strip()
+        summary = (r.get("summary_ja") or "").strip()
+
+        # --- AIの返りを検証(不正なジャンル/地域は矯正 or 除外) ---
+        if genre not in VALID_GENRES:
+            genre = "その他"
+        if region not in REGION_QUOTAS:
+            continue  # 地域を集計できない記事はノルマ選抜の対象外にする
+
+        # 地名が取れない記事はピンにしない、という設計上のルール
+        if not place or not summary:
+            continue
+
+        batch_enriched.append({
+            **article,
+            "ai_genre": genre,
+            "ai_region": region,
+            "ai_place": place,
+            "ai_title_ja": title_ja or article.get("title", ""),
+            "ai_summary": summary,
+        })
+
+    return batch_enriched, blocked
+
+
+def enrich_articles_with_ai(articles):
+    total_batches = (len(articles) + ARTICLES_PER_AI_BATCH - 1) // ARTICLES_PER_AI_BATCH
+    batches = [
+        articles[b * ARTICLES_PER_AI_BATCH: b * ARTICLES_PER_AI_BATCH + ARTICLES_PER_AI_BATCH]
+        for b in range(total_batches)
+    ]
+
+    # 2026-07-07: 以前はバッチを1つずつ直列に処理し、間にGROQ_REQUEST_DELAY_SEC秒
+    # 待っていた。新規記事が数千件規模の時間帯だと数百バッチを直列待機することになり、
+    # パイプライン全体が60分(cronの実行間隔)を超えて「1時間に1回のはずが3時間に
+    # 1回程度しか更新されない」不具合の主因になっていた。GROQ_MAX_WORKERS件を
+    # 同時実行することで待機時間を実質1/GROQ_MAX_WORKERSに圧縮する。429(レート制限)が
+    # 起きてもcall_groq_batch側の指数バックオフ再試行で自然に吸収される設計。
+    enriched = []
+    blocked_sensitive = 0
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=GROQ_MAX_WORKERS) as executor:
+        future_to_num = {
+            executor.submit(_process_ai_batch, batch, i + 1, total_batches): i + 1
+            for i, batch in enumerate(batches)
+        }
+        for future in concurrent.futures.as_completed(future_to_num):
+            batch_num = future_to_num[future]
+            try:
+                batch_enriched, batch_blocked = future.result()
+            except Exception as e:
+                print(f"  [SKIP] バッチ{batch_num}で予期しない例外: {e}")
                 continue
-            article = batch[idx]
-
-            if _is_sensitive_title(article.get("title", "")):
-                blocked_sensitive += 1
-                continue
-
-            genre = r.get("genre") or ""
-            region = r.get("region") or ""
-            place = (r.get("place") or "").strip()
-            title_ja = (r.get("title_ja") or "").strip()
-            summary = (r.get("summary_ja") or "").strip()
-
-            # --- AIの返りを検証(不正なジャンル/地域は矯正 or 除外) ---
-            if genre not in VALID_GENRES:
-                genre = "その他"
-            if region not in REGION_QUOTAS:
-                continue  # 地域を集計できない記事はノルマ選抜の対象外にする
-
-            # 地名が取れない記事はピンにしない、という設計上のルール
-            if not place or not summary:
-                continue
-
-            enriched.append({
-                **article,
-                "ai_genre": genre,
-                "ai_region": region,
-                "ai_place": place,
-                "ai_title_ja": title_ja or article.get("title", ""),
-                "ai_summary": summary,
-            })
-
-        time.sleep(GROQ_REQUEST_DELAY_SEC)
+            enriched.extend(batch_enriched)
+            blocked_sensitive += batch_blocked
 
     if blocked_sensitive:
         print(f"  [FILTER] センシティブな見出しのためピン化を見送り: {blocked_sensitive}件")
@@ -432,7 +465,17 @@ def select_by_region_quota(enriched):
     selected = []
     for region, quota in REGION_QUOTAS.items():
         candidates = by_region.get(region, [])
-        picked = candidates[:quota]
+        # 2026-07-07: 以前は「候補リストの先頭からquota件」を機械的に採用していた。
+        # collect_all_articles()はNEWS_COUNTRIES(国別トップニュース=硬めの全国ニュース)
+        # を先に集め、LOCAL_CITIES(都市検索=もっとマイナーで地元色のあるニュース)を
+        # 後から追加するため、この「先頭優先」だと硬いニュースが常にノルマを埋め尽くし、
+        # 動物の話題や開店・変わった事件などの人間味のあるニュースがほぼ選ばれない、
+        # という偏りが起きていた(ユーザー指摘: 「もっとマイナーなニュースも入れてほしい」)。
+        # シャッフルしてから採用することで、取得元(国別/ローカル都市)に関わらず
+        # 公平にノルマ選抜されるようにする。
+        shuffled = candidates[:]
+        random.shuffle(shuffled)
+        picked = shuffled[:quota]
         selected.extend(picked)
         print(f"  [SELECT] {region}: {len(picked)}/{quota}件")
 
@@ -527,13 +570,20 @@ def _valid_http_url(url):
 
 def fetch_real_article_image(url):
     """記事ページ(Google Newsの中継URLの先)からog:image(実際の記事のSNSシェア画像)を
-    軽量に取得する。取得できなければNoneを返す(呼び出し側で「画像なし」として扱う)。
-    記事全文をダウンロードする必要はなく、通常<head>付近にog:imageがあるため、
-    REAL_IMAGE_FETCH_MAX_BYTESぶんだけ読んで打ち切ることで負荷・時間を抑えている。
-    失敗(タイムアウト・403・og:image無し等)は珍しくないため、静かにNoneを返すだけで
-    パイプライン全体は止めない。"""
+    軽量に取得する。記事全文をダウンロードする必要はなく、通常<head>付近にog:imageが
+    あるため、REAL_IMAGE_FETCH_MAX_BYTESぶんだけ読んで打ち切ることで負荷・時間を
+    抑えている。失敗(タイムアウト・403・og:image無し等)は珍しくないため、パイプライン
+    全体は止めない。
+
+    戻り値: (image_url_or_None, reason)
+    reason は診断用の理由コード(build_new_items側で集計してログに出す)。
+    2026-07-05にこの実画像取得機能を入れて以来、本番で成功率0%が続いており
+    (ブラウザでの手動検証ではGoogle Newsのリダイレクト自体は正常なHTTPリダイレクトで、
+    リンク先ページにも普通にog:imageがあることまでは確認済み)、原因がタイムアウトなのか
+    403などのブロックなのかog:image不在なのか、ログだけでは切り分けられなかった。
+    そのため理由コードを返すようにして、次回の本番実行ログで内訳を集計できるようにした。"""
     if not _valid_http_url(url):
-        return None
+        return None, "invalid_url"
 
     try:
         resp = requests.get(
@@ -544,8 +594,9 @@ def fetch_real_article_image(url):
             stream=True,
         )
         if resp.status_code != 200:
+            reason = f"http_{resp.status_code}"
             resp.close()
-            return None
+            return None, reason
 
         chunk = b""
         for part in resp.iter_content(chunk_size=8192):
@@ -560,10 +611,18 @@ def fetch_real_article_image(url):
             if m:
                 img_url = m.group(1).strip()
                 if _valid_http_url(img_url):
-                    return img_url
-        return None
-    except Exception:
-        return None
+                    return img_url, "ok"
+        return None, "no_og_image_tag"
+    except requests.exceptions.Timeout:
+        return None, "timeout"
+    except requests.exceptions.SSLError:
+        return None, "ssl_error"
+    except requests.exceptions.ConnectionError:
+        return None, "connection_error"
+    except requests.exceptions.TooManyRedirects:
+        return None, "too_many_redirects"
+    except Exception as e:
+        return None, f"other:{type(e).__name__}"
 
 
 def build_new_items(selected, cache):
@@ -588,6 +647,7 @@ def build_new_items(selected, cache):
 
     real_image_by_url = {}
     if urls_needing_fetch:
+        reason_counts = {}
         with concurrent.futures.ThreadPoolExecutor(max_workers=REAL_IMAGE_FETCH_MAX_WORKERS) as executor:
             future_to_url = {
                 executor.submit(fetch_real_article_image, u): u for u in urls_needing_fetch
@@ -595,9 +655,20 @@ def build_new_items(selected, cache):
             for future in concurrent.futures.as_completed(future_to_url):
                 u = future_to_url[future]
                 try:
-                    real_image_by_url[u] = future.result()
-                except Exception:
-                    real_image_by_url[u] = None
+                    img_url, reason = future.result()
+                except Exception as e:
+                    img_url, reason = None, f"future_exception:{type(e).__name__}"
+                real_image_by_url[u] = img_url
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+        # 2026-07-07: 実画像取得が本番で0%成功が続いていた問題を切り分けるための
+        # 診断ログ。原因(タイムアウト/403等のブロック/og:image不在/その他例外)の
+        # 内訳がここに出るので、次回の本番実行ログを見れば根本原因が特定できるはず。
+        ok_count = reason_counts.get("ok", 0)
+        print(f"  [IMAGE] og:image取得: {ok_count}/{len(urls_needing_fetch)}件成功")
+        for reason, count in sorted(reason_counts.items(), key=lambda kv: -kv[1]):
+            if reason != "ok":
+                print(f"    [IMAGE] 失敗内訳 {reason}: {count}件")
 
     for a in selected:
         place = a["ai_place"]
