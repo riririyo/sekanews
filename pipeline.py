@@ -45,6 +45,7 @@ from config import (
     GROQ_API_KEY,
     GROQ_MAX_WORKERS,
     GROQ_REQUEST_DELAY_SEC,
+    GROQ_RETRY_GIVE_UP_THRESHOLD_SEC,
     ITEM_MAX_AGE_HOURS,
     GOOGLE_NEWS_RESOLVE_TIMEOUT_SEC,
     LOCAL_CITIES,
@@ -324,11 +325,23 @@ def call_groq_batch(batch):
             if resp.status_code == 429:
                 retry_after = resp.headers.get("Retry-After", "")
                 try:
-                    wait = float(retry_after)
+                    raw_wait = float(retry_after)
                 except (TypeError, ValueError):
-                    wait = min(2 ** (attempt + 1), 30)
-                wait = min(max(wait, 1.0), 60.0)
+                    raw_wait = min(2 ** (attempt + 1), 30)
                 last_err = RuntimeError(f"HTTP 429 (rate limit), Retry-After={retry_after or 'なし'}")
+                # 2026-07-07: 以前はここで(Retry-Afterが何秒であれ)60秒に丸めて
+                # 再試行していたが、本番run#34で実測したところRetry-Afterが816秒/823秒
+                # (=短時間の混雑ではなく1時間/1日単位のクォータ切れを示唆)なのに60秒だけ
+                # 待って再試行し、当然また429になる、をAI_MAX_RETRIES回(6回)繰り返して
+                # 1バッチだけで6分(60秒×6回)を無駄にし続けていたことが判明した。
+                # Retry-AfterがGROQ_RETRY_GIVE_UP_THRESHOLD_SECを超える場合は、
+                # このrun中には回復しない長時間のレート制限とみなし、再試行を諦めて
+                # 即座にこのバッチをスキップする。
+                if raw_wait > GROQ_RETRY_GIVE_UP_THRESHOLD_SEC:
+                    print(f"  [WARN] Groqレート制限(429) -> Retry-After={raw_wait:.0f}秒は長すぎるため、"
+                          f"再試行を諦めてこのバッチをスキップします(クォータ切れの可能性)")
+                    break
+                wait = min(max(raw_wait, 1.0), 60.0)
                 if attempt < AI_MAX_RETRIES:
                     print(f"  [WARN] Groqレート制限(429, 試行{attempt + 1}) -> {wait:.0f}秒待って再試行")
                     time.sleep(wait)
