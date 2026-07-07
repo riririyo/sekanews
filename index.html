@@ -135,6 +135,13 @@
         }
         .rich-tooltip::before { display: none; }
         .dark .rich-tooltip { background: #1f2937 !important; color: #f3f4f6; }
+        /* 近づいたら(一定ズーム以上で)カーソルを乗せなくてもタイトルが見えるように
+           する機能。tooltipはpermanent:trueで常時DOM上に存在させておき、表示/非表示は
+           CSSだけで切り替える(全ピンぶんopen/closeTooltipをJSで呼ぶより軽い)。
+           ズームに応じて#mapへmap-titles-visibleクラスを付け外しする処理はJS側にある。 */
+        #map:not(.map-titles-visible) .leaflet-tooltip.rich-tooltip {
+            display: none;
+        }
 
         #status-banner {
             position: absolute;
@@ -909,6 +916,18 @@
 
         map.on('moveend', updateVisibleNewsCount);
 
+        // 近づいたら(ズームインしたら)カーソルを乗せなくてもピンのタイトルが見えるように
+        // する機能。このズームレベル以上で#mapにmap-titles-visibleクラスを付け、
+        // permanent:trueで常時DOM上にあるtooltip(rich-tooltip)をCSS側で表示させる。
+        // クラスタが解けて個別ピンが見分けられる程度の近さの目安として8にしてある。
+        const TOOLTIP_ALWAYS_VISIBLE_ZOOM = 8;
+        function updateTooltipVisibility() {
+            const mapEl = document.getElementById('map');
+            mapEl.classList.toggle('map-titles-visible', map.getZoom() >= TOOLTIP_ALWAYS_VISIBLE_ZOOM);
+        }
+        map.on('zoomend', updateTooltipVisibility);
+        updateTooltipVisibility();
+
         // newsData を元に地図上へピンを立てる(クラスタリング対応。データ読み込み完了後に呼ばれる)
         function renderMap() {
             if (clusterGroup) {
@@ -976,6 +995,11 @@
                     </div>
                     <div class="text-xs">${escapeHtml(news.title)}</div>
                  `, {
+                    // permanent:true で常時DOM上にtooltipを存在させ、実際の表示/非表示は
+                    // CSS側(#map.map-titles-visible の有無)で切り替える。これにより
+                    // 「近づいたら(ズームインしたら)カーソルを乗せなくてもタイトルが
+                    // 見える」という挙動を、ピン数が多くても軽い処理で実現している。
+                    permanent: true,
                     direction: 'top',
                     offset: [0, -15],
                     className: 'rich-tooltip'
