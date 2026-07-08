@@ -279,6 +279,53 @@
         #sidebar-content {
             padding-bottom: calc(24px + env(safe-area-inset-bottom));
         }
+
+        /* ポータル(総合ニュース一覧)パネル: アクセス直後にヤフーニュース的な
+           見出し一覧をまず見せ、「普通のニュースサイト」らしい第一印象にするための
+           全画面パネル。地図より手前・広告オーバーレイと個別記事サイドバーより奥。 */
+        #portal-panel {
+            position: fixed;
+            inset: 0;
+            z-index: 1400;
+            overflow-y: auto;
+            background: #f9fafb;
+        }
+        .dark #portal-panel { background: #0f172a; }
+        #portal-panel.portal-hidden { display: none; }
+
+        #portal-tabs {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding: 4px 2px 10px;
+            -webkit-overflow-scrolling: touch;
+        }
+        #portal-tabs::-webkit-scrollbar { display: none; }
+        .portal-tab {
+            flex-shrink: 0;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 6px 14px;
+            border-radius: 9999px;
+            background: rgba(0,0,0,0.05);
+            color: #4b5563;
+            white-space: nowrap;
+            cursor: pointer;
+            border: none;
+        }
+        .dark .portal-tab { background: rgba(255,255,255,0.08); color: #d1d5db; }
+        .portal-tab.portal-tab-active { background: #111827; color: white; }
+        .dark .portal-tab.portal-tab-active { background: #f3f4f6; color: #111827; }
+
+        .portal-featured-card, .portal-list-item {
+            cursor: pointer;
+            transition: box-shadow 0.15s, transform 0.15s;
+        }
+        .portal-featured-card:hover, .portal-list-item:hover {
+            box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+            transform: translateY(-1px);
+        }
+
     </style>
 </head>
 <body class="bg-gray-100 dark:bg-gray-900 overflow-hidden relative">
@@ -331,6 +378,11 @@
                             aria-label="ダーク/ライト表示切替">
                         <i class="ph ph-moon text-lg" aria-hidden="true"></i>
                     </button>
+                    <button id="portal-reopen-btn" type="button" onclick="openPortal()"
+                            class="shrink-0 w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                            aria-label="ニュース一覧を開く">
+                        <i class="ph ph-newspaper text-lg" aria-hidden="true"></i>
+                    </button>
                     <a id="support-link" href="#" target="_blank" rel="noopener noreferrer"
                        class="hidden shrink-0 ml-1 text-[11px] font-bold text-pink-500 hover:text-pink-600 items-center gap-1">
                         <i class="ph-fill ph-heart" aria-hidden="true"></i> 応援する
@@ -377,6 +429,26 @@
 
     <!-- 地図コンテナ -->
     <div id="map" role="application" aria-label="世界のニュース地図"></div>
+
+    <!-- ポータル(総合ニュース一覧)パネル。アクセス直後はまずここが表示され、
+         普通のニュースサイトのように見出しがすぐ読める。「地図でさがす」で地図表示に切替可能。 -->
+    <div id="portal-panel">
+        <div class="max-w-3xl mx-auto px-4 pt-6 pb-16" style="padding-top: calc(1.5rem + env(safe-area-inset-top));">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h2 class="text-xl font-extrabold text-gray-900 dark:text-gray-100">せかにゅ 総合</h2>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">日本のニュースじゃ報じられない、世界のブルーオーシャンニュース</p>
+                </div>
+                <button type="button" onclick="closePortal()"
+                        class="shrink-0 flex items-center gap-1.5 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-xs font-bold px-4 py-2 rounded-full hover:opacity-90 transition-opacity">
+                    <i class="ph ph-map-trifold text-base" aria-hidden="true"></i> 地図でさがす
+                </button>
+            </div>
+            <div id="portal-tabs"></div>
+            <div id="portal-featured" class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6"></div>
+            <div id="portal-list" class="space-y-3"></div>
+        </div>
+    </div>
 
     <!-- 読み込み中オーバーレイ -->
     <div id="loading-overlay" role="status" aria-live="polite">
@@ -1033,6 +1105,103 @@
             updateVisibleNewsCount();
         }
 
+        // ------------------------------------------------------------------
+        // ポータル(総合ニュース一覧)パネル
+        // アクセス直後に、地図を見なくても完結する「ニュースサイトのトップページ」的な
+        // 一覧をまず見せるための機能。カテゴリタブ・注目ニュース・全件リストで構成する。
+        // ------------------------------------------------------------------
+        let portalActiveCategory = null; // null = 総合(全カテゴリ)
+
+        window.setPortalCategory = function (category) {
+            portalActiveCategory = (portalActiveCategory === category) ? null : category;
+            renderPortal();
+        };
+
+        window.openPortal = function () {
+            document.getElementById('portal-panel').classList.remove('portal-hidden');
+        };
+
+        window.closePortal = function () {
+            document.getElementById('portal-panel').classList.add('portal-hidden');
+        };
+
+        function portalNewsScore(news) {
+            const iso = news.firstSeenAt || news.publishedAt;
+            const d = iso ? new Date(iso).getTime() : NaN;
+            return isNaN(d) ? -Infinity : d;
+        }
+
+        function renderPortal() {
+            const tabsEl = document.getElementById('portal-tabs');
+            const featuredEl = document.getElementById('portal-featured');
+            const listEl = document.getElementById('portal-list');
+            if (!tabsEl || !featuredEl || !listEl) return;
+
+            const categories = Array.from(allCategoriesSet);
+            tabsEl.innerHTML = ['<button type="button" class="portal-tab ' + (portalActiveCategory === null ? 'portal-tab-active' : '') + '" onclick="setPortalCategory(null)">総合</button>']
+                .concat(categories.map(cat => {
+                    const isActive = portalActiveCategory === cat;
+                    const catAttr = escapeHtml(cat).replace(/"/g, '&quot;');
+                    return `<button type="button" class="portal-tab ${isActive ? 'portal-tab-active' : ''}" onclick="setPortalCategory(&quot;${catAttr}&quot;)">${escapeHtml(cat)}</button>`;
+                })).join('');
+
+            const pool = newsData.filter(n => n.location && (portalActiveCategory === null || n.category === portalActiveCategory));
+            const sorted = pool.slice().sort((a, b) => portalNewsScore(b) - portalNewsScore(a));
+
+            if (sorted.length === 0) {
+                featuredEl.innerHTML = '';
+                listEl.innerHTML = '<div class="text-center text-gray-500 dark:text-gray-400 mt-10">ニュースが見つかりませんでした</div>';
+                return;
+            }
+
+            const spikyPlaces = computeSpikyPlaces();
+            const nonSponsored = sorted.filter(n => !n.isSponsored);
+            const featured = nonSponsored.slice(0, 3);
+            const featuredIds = new Set(featured.map(n => n.id));
+            const rest = sorted.filter(n => !featuredIds.has(n.id));
+
+            featuredEl.innerHTML = featured.map(news => {
+                const relTime = formatRelativeTime(news.publishedAt);
+                const isSpiky = spikyPlaces.has(news.location.name);
+                const summary = (news.aiSummary || '').slice(0, 54);
+                return `
+                    <div class="portal-featured-card bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl p-4 shadow-sm"
+                         role="button" tabindex="0" onclick="openSidebarFromList(${news.id})"
+                         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSidebarFromList(${news.id});}">
+                        <div class="flex items-center gap-1.5 mb-2 flex-wrap">
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold text-white" style="background-color: ${escapeHtml(news.color)}">${escapeHtml(news.category)}</span>
+                            <span class="text-[11px] text-gray-400 dark:text-gray-500">${escapeHtml(news.location.name)}${relTime ? '・' + escapeHtml(relTime) : ''}</span>
+                            ${isSpiky ? '<span class="text-[10px] font-bold text-red-600 dark:text-red-400">🔥急上昇</span>' : ''}
+                        </div>
+                        <h3 class="font-extrabold text-sm leading-snug text-gray-900 dark:text-gray-100 mb-1">${escapeHtml(news.title)}</h3>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">${escapeHtml(summary)}${(news.aiSummary || '').length > 54 ? '…' : ''}</p>
+                    </div>
+                `;
+            }).join('');
+
+            listEl.innerHTML = rest.map(news => {
+                const relTime = formatRelativeTime(news.publishedAt);
+                const isSponsored = !!news.isSponsored;
+                const isSpiky = !isSponsored && spikyPlaces.has(news.location.name);
+                const tag = isSponsored
+                    ? '<span class="text-[9px] font-bold text-amber-600 dark:text-amber-400">PR</span>'
+                    : (isSpiky ? '<span class="text-[9px] font-bold text-red-600 dark:text-red-400">🔥急上昇</span>' : '');
+                return `
+                    <div class="portal-list-item bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl p-4 shadow-sm"
+                         role="button" tabindex="0" onclick="openSidebarFromList(${news.id})"
+                         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSidebarFromList(${news.id});}">
+                        <div class="flex items-center gap-2 mb-1.5 flex-wrap">
+                            <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${escapeHtml(news.color)}"></span>
+                            <span class="text-xs font-bold text-gray-500 dark:text-gray-400">${escapeHtml(news.location.name)}</span>
+                            ${relTime ? `<span class="text-[11px] text-gray-400 dark:text-gray-500">・${escapeHtml(relTime)}</span>` : ''}
+                            ${tag}
+                        </div>
+                        <h3 class="font-bold text-sm leading-tight text-gray-900 dark:text-gray-100">${escapeHtml(news.title)}</h3>
+                    </div>
+                `;
+            }).join('');
+        }
+
         function normalizeNewsPayload(data) {
             // 旧形式(配列そのもの)/新形式({generated_at, next_update_at, count, items})の
             // 両方を許容する
@@ -1061,6 +1230,7 @@
             const id = decodeURIComponent(match[1]);
             const news = newsData.find(n => n.id === id);
             if (!news || !news.location) return;
+            closePortal();
             map.setView([news.location.lat, news.location.lng], Math.max(map.getZoom(), 6));
             openSidebar(news, 'right');
         }
@@ -1095,6 +1265,7 @@
             }
 
             renderMap();
+            renderPortal();
             openNewsFromUrlHash();
             todayDateEl.textContent = formatTodayDate();
             if (generatedAt) showLastUpdated(generatedAt, nextUpdateAt);
