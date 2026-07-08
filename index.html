@@ -470,15 +470,28 @@
          普通のニュースサイトのように見出しがすぐ読める。「地図でさがす」で地図表示に切替可能。 -->
     <div id="portal-panel">
         <div class="max-w-3xl mx-auto px-4 pt-6 pb-16" style="padding-top: calc(1.5rem + env(safe-area-inset-top));">
-            <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
                 <div>
                     <h2 class="text-xl font-extrabold text-gray-900 dark:text-gray-100">せかにゅ 総合</h2>
                     <p class="text-xs text-gray-500 dark:text-gray-400">日本のニュースじゃ報じられない、世界のブルーオーシャンニュース</p>
                 </div>
-                <button type="button" onclick="closePortal()"
-                        class="shrink-0 flex items-center gap-1.5 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-xs font-bold px-4 py-2 rounded-full hover:opacity-90 transition-opacity">
-                    <i class="ph ph-map-trifold text-base" aria-hidden="true"></i> 地図でさがす
-                </button>
+                <div class="flex items-center gap-2">
+                    <button id="portal-theme-toggle" type="button" onclick="toggleTheme()"
+                            class="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                            aria-label="ダーク/ライト表示切替">
+                        <i class="ph ph-moon text-lg" aria-hidden="true"></i>
+                    </button>
+                    <button type="button" onclick="closePortal()"
+                            class="shrink-0 flex items-center gap-1.5 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-xs font-bold px-4 py-2 rounded-full hover:opacity-90 transition-opacity">
+                        <i class="ph ph-map-trifold text-base" aria-hidden="true"></i> 地図でさがす
+                    </button>
+                </div>
+            </div>
+            <div class="relative mb-4">
+                <i class="ph ph-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm" aria-hidden="true"></i>
+                <input id="portal-search-input" type="text" placeholder="キーワード検索..."
+                       class="w-full pl-8 pr-3 py-2 text-xs rounded-full border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-400"
+                       aria-label="ニュースをキーワードで検索">
             </div>
             <div id="portal-map-preview-card" onclick="expandPortalMap(event)" role="button" tabindex="0"
                  onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();expandPortalMap(event);}">
@@ -488,6 +501,11 @@
             <div id="portal-tabs"></div>
             <div id="portal-featured" class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6"></div>
             <div id="portal-list" class="space-y-3"></div>
+            <div class="flex items-center justify-center gap-3 text-[10px] text-gray-400 dark:text-gray-500 mt-8 pb-2 flex-wrap">
+                <a href="info.html#terms" target="_blank" rel="noopener noreferrer" class="underline">利用規約・プライバシー</a>
+                <a href="info.html#advertise" target="_blank" rel="noopener noreferrer" class="text-amber-600 dark:text-amber-400 font-bold">📢 広告掲載は準備中</a>
+                <span title="このサイトの見出し・要約はAIが自動生成しています。誤訳や誤りを含む場合があります。大学生が個人で運営しています。">🤖 AIが自動生成 / 個人運営</span>
+            </div>
         </div>
     </div>
 
@@ -668,10 +686,12 @@
 
         // --- ダークモード ---
         function applyThemeIcon() {
-            const icon = document.querySelector('#theme-toggle i');
-            if (!icon) return;
             const isDark = document.documentElement.classList.contains('dark');
-            icon.className = isDark ? 'ph ph-sun text-lg' : 'ph ph-moon text-lg';
+            const cls = isDark ? 'ph ph-sun text-lg' : 'ph ph-moon text-lg';
+            const icon = document.querySelector('#theme-toggle i');
+            if (icon) icon.className = cls;
+            const portalIcon = document.querySelector('#portal-theme-toggle i');
+            if (portalIcon) portalIcon.className = cls;
         }
         window.toggleTheme = function () {
             document.documentElement.classList.toggle('dark');
@@ -751,10 +771,16 @@
             return true;
         }
 
-        searchInput.addEventListener('input', () => {
-            searchQuery = searchInput.value.trim();
+        const portalSearchInput = document.getElementById('portal-search-input');
+        function handleSearchInput(value) {
+            searchQuery = value.trim();
+            if (searchInput && searchInput.value !== value) searchInput.value = value;
+            if (portalSearchInput && portalSearchInput.value !== value) portalSearchInput.value = value;
             renderMap();
-        });
+            renderPortal();
+        }
+        searchInput.addEventListener('input', () => handleSearchInput(searchInput.value));
+        if (portalSearchInput) portalSearchInput.addEventListener('input', () => handleSearchInput(portalSearchInput.value));
 
         // ジャンルクリック = そのジャンルだけを表示(ソロ表示)。
         // 既にそのジャンル1つだけがソロ表示中の状態でもう一度押すと、全ジャンル表示に戻す。
@@ -1254,7 +1280,16 @@
                     return `<button type="button" class="portal-tab ${isActive ? 'portal-tab-active' : ''}" onclick="setPortalCategory(&quot;${catAttr}&quot;)">${escapeHtml(cat)}</button>`;
                 })).join('');
 
-            const pool = newsData.filter(n => n.location && (portalActiveCategory === null || n.category === portalActiveCategory));
+            const pool = newsData.filter(n => {
+                if (!n.location) return false;
+                if (portalActiveCategory !== null && n.category !== portalActiveCategory) return false;
+                if (searchQuery) {
+                    const q = searchQuery.toLowerCase();
+                    const haystack = `${n.title || ''} ${n.originalTitle || ''} ${n.aiSummary || ''} ${n.location.name || ''}`.toLowerCase();
+                    if (!haystack.includes(q)) return false;
+                }
+                return true;
+            });
             const sorted = pool.slice().sort((a, b) => portalNewsScore(b) - portalNewsScore(a));
 
             if (sorted.length === 0) {
