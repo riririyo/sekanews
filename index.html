@@ -751,9 +751,16 @@
 
             const safeImg = news.imageUrl ? safeHttpUrl(news.imageUrl, '') : '';
             const safeArticleUrl = safeHttpUrl(news.url, '#');
-            const disclaimer = news.aiSummaryIsHeadlineOnly
-                ? `<p class="text-[11px] text-purple-400 dark:text-purple-300/80 mt-2">※ 見出しから推測したAI要約です(一般的な背景情報の補足を含む場合があります)。タイトルもAIによる日本語訳です。詳細は元記事でご確認ください。</p>`
-                : '';
+            // 2026-07-09: AI自動生成である旨と誤り報告の導線を、以前は見出しのみ要約の
+            // 記事だけに限定して表示していたが、全記事に常時表示するよう変更した
+            // (透明性向上のため)。報告先はサイト専用の問い合わせアドレス。
+            const reportMailto = `mailto:sekai.news.info@gmail.com` +
+                `?subject=${encodeURIComponent('せかにゅ 誤り報告: ' + (news.title || ''))}` +
+                `&body=${encodeURIComponent('記事ID: ' + news.id + '\n元記事URL: ' + (news.url || '') + '\n\n【誤りの内容】\n')}`;
+            const headlineOnlyNote = news.aiSummaryIsHeadlineOnly
+                ? '見出しから推測したAI要約です(一般的な背景情報の補足を含む場合があります)。タイトルもAIによる日本語訳です。詳細は元記事でご確認ください。'
+                : 'このタイトル・要約はAIが自動生成しています。誤訳や誤りが含まれる場合があります。';
+            const disclaimer = `<p class="text-[11px] text-purple-400 dark:text-purple-300/80 mt-2">※ ${headlineOnlyNote} <a href="${reportMailto}" class="underline">誤りを報告</a></p>`;
 
             const relTime = formatRelativeTime(news.publishedAt);
             const timeHtml = relTime
