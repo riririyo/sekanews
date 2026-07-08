@@ -62,6 +62,10 @@ jobs:
           cp info.html _site/
           cp news_data.json _site/
           cp geocode_cache.json _site/
+          # 2026-07-09: gh-pagesはforce_orphanで毎回作り直されるため、GitHubが
+          # カスタムドメイン用に管理しているCNAMEファイルもここに含めないと
+          # 毎時デプロイのたびにカスタムドメイン設定が失われてしまう。
+          if [ -f CNAME ]; then cp CNAME _site/; fi
 
       # gh-pagesブランチに「毎回1コミットだけ」で公開する(force_orphan)。
       # これによりmainのコミット履歴は一切自動更新で汚れない。
