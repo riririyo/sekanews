@@ -283,20 +283,30 @@
 </head>
 <body class="bg-gray-100 dark:bg-gray-900 overflow-hidden relative">
     <!-- 2026-07-08: アクセス時に3秒間だけ広告を表示し、自動で消えてから地図が見られるようにする
-         起動時オーバーレイ。PC/スマホ共通。実際の広告枠が決まるまでのプレースホルダー表示。 -->
-    <div id="ad-splash" class="fixed inset-0 z-[9999] flex items-center justify-center bg-gray-900 transition-opacity duration-500 ease-out">
+         起動時オーバーレイ。PC/スマホ共通。実際の広告枠が決まるまでのプレースホルダー表示。
+         アドブロックの汎用フィルタ(id/classに"ad"を含む要素を隠すルール)に巻き込まれないよう、
+         id名はあえて「ad」を含まない名前にしている(これは第三者広告ではなく自社の告知なので)。 -->
+    <div id="site-intro-overlay" class="fixed inset-0 z-[9999] flex items-center justify-center bg-gray-900 transition-opacity duration-500 ease-out">
         <div class="text-center px-6">
             <p class="text-white/50 text-[10px] font-semibold tracking-[0.3em] mb-3">AD</p>
             <p class="text-white text-lg font-bold mb-1">(仮)広告スペース</p>
             <p class="text-white/70 text-sm mb-4">広告枠 募集中</p>
-            <p class="text-white/50 text-xs">まもなくニュース地図が表示されます...</p>
+            <p class="text-white/50 text-xs"><span id="intro-countdown">3</span>秒後にサイトが開きます</p>
         </div>
     </div>
     <script>
         (function () {
-            var splash = document.getElementById('ad-splash');
+            var splash = document.getElementById('site-intro-overlay');
             if (!splash) return;
+            var countdownEl = document.getElementById('intro-countdown');
+            var remaining = 3;
+            var countdownTimer = setInterval(function () {
+                remaining -= 1;
+                if (countdownEl) countdownEl.textContent = Math.max(remaining, 0);
+                if (remaining <= 0) clearInterval(countdownTimer);
+            }, 1000);
             setTimeout(function () {
+                clearInterval(countdownTimer);
                 splash.style.opacity = '0';
                 setTimeout(function () { splash.remove(); }, 500);
             }, 3000);
@@ -348,18 +358,18 @@
          左右の余白を使うレイアウトなので地図自体は縮めていない(zoom操作の邪魔にならないよう
          上下にゆとりを持たせてヘッダー/ズームボタン/属性表示と被らない範囲だけに配置)。
          スマホ幅では画面を圧迫するため lg (1024px)未満では非表示にしている。 -->
-    <div id="ad-slot-left" class="hidden lg:block fixed left-0 top-32 bottom-28 w-[120px] z-[800] pointer-events-none">
+    <div id="sponsor-space-left" class="hidden lg:block fixed left-0 top-32 bottom-28 w-[120px] z-[800] pointer-events-none">
         <div class="h-full flex items-center justify-center pointer-events-auto bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-r-xl">
             <p class="text-xs font-semibold text-gray-400 dark:text-gray-500 text-center leading-relaxed px-2">(仮)<br>広告<br>募集予定</p>
         </div>
     </div>
-    <div id="ad-slot-right" class="hidden lg:block fixed right-0 top-32 bottom-28 w-[120px] z-[800] pointer-events-none">
+    <div id="sponsor-space-right" class="hidden lg:block fixed right-0 top-32 bottom-28 w-[120px] z-[800] pointer-events-none">
         <div class="h-full flex items-center justify-center pointer-events-auto bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-l-xl">
             <p class="text-xs font-semibold text-gray-400 dark:text-gray-500 text-center leading-relaxed px-2">(仮)<br>広告<br>募集予定</p>
         </div>
     </div>
     <!-- スマホ版の広告プレースホルダー(不快感を与えないよう小サイズ・左下の隅に配置、地図操作の邪魔にならない位置) -->
-    <div id="ad-slot-mobile" class="lg:hidden fixed bottom-2 left-2 z-[900] pointer-events-none">
+    <div id="sponsor-space-mobile" class="lg:hidden fixed bottom-2 left-2 z-[900] pointer-events-none">
         <div class="pointer-events-auto bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm border border-dashed border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1 flex items-center gap-1">
             <p class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 leading-none whitespace-nowrap">(仮)広告募集予定</p>
         </div>
