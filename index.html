@@ -940,10 +940,12 @@
                 map.removeLayer(clusterGroup);
             }
             // 2026-07-08: クラスタリング(近いピンを丸めて件数だけ表示する方式)を全廃したところ
-            // ピン数が多いエリアで描画が重くなったため復活させた。ただし以前の視認性の悪さ
-            // (「大島てる方式」のクラスタが弾けて個別ピンに広がる演出=spiderfy)は
-            // spiderfyOnMaxZoomをfalseのままにして再発させない。
-            clusterGroup = L.markerClusterGroup({ maxClusterRadius: 55, spiderfyOnMaxZoom: false });
+            // ピン数が多いエリアで描画が重くなったため復活させた。
+            // 2026-07-09: 同じ座標(同じ場所)のピンが複数あると、最大ズームまで拡大しても
+            // クラスタが解けず、地図上からそれらのニュースにアクセスできなくなる不具合が
+            // あったため、spiderfyOnMaxZoomを再びtrueに戻した(最大ズームでクリックすると
+            // 個別ピンが弾けて広がり、それぞれタップできるようになる)。
+            clusterGroup = L.markerClusterGroup({ maxClusterRadius: 55, spiderfyOnMaxZoom: true });
 
             const spikyPlaces = computeSpikyPlaces();
 
