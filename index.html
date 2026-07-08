@@ -394,6 +394,7 @@
     <div id="footer-links">
         <a href="info.html#terms" target="_blank" rel="noopener noreferrer">利用規約・プライバシー</a>
         <a href="info.html#advertise" target="_blank" rel="noopener noreferrer" class="advertise-link">📢 広告掲載は準備中</a>
+        <span class="ai-disclaimer-note" title="このサイトの見出し・要約はAIが自動生成しています。誤訳や誤りを含む場合があります。大学生が個人で運営しています。">🤖 AIが自動生成 / 個人運営</span>
     </div>
 
     <!-- エリア内のニュースを見るボタン -->
@@ -780,6 +781,12 @@
             const xShareUrl = `https://twitter.com/intent/tweet?text=${shareText}&url=${shareUrlEnc}`;
             const lineShareUrl = `https://social-plugins.line.me/lineit/share?url=${shareUrlEnc}&text=${shareText}`;
             const copyArg = safeArticleUrl.replace(/'/g, "\\'");
+            // 2026-07-09: SNSでシェアしても元記事(他社サイト)に飛ぶだけでせかにゅ自体には
+            // 誰も戻ってこない問題があったため、せかにゅのこの記事に直接ジャンプできる
+            // 固有リンク(#news=id)を追加した。共有・SEO対策として、これは元記事とは別に
+            // 用意し、両方を選べるようにする。
+            const sekanewsShareUrl = `${location.origin}${location.pathname}#news=${encodeURIComponent(news.id)}`;
+            const sekanewsCopyArg = sekanewsShareUrl.replace(/'/g, "\\'");
             const imageBlockHtml = safeImg
                 ? `<div class="rounded-xl overflow-hidden shadow-md h-48 bg-gray-200">
                     <img src="${escapeHtml(safeImg)}" alt="${escapeHtml(news.title)}" class="w-full h-full object-cover"
@@ -833,6 +840,9 @@
                     </div>
                     <button onclick="alert('ブックマークに保存しました！')" class="flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 font-bold py-2.5 px-4 rounded-xl transition-colors text-sm">
                         <i class="ph ph-bookmark-simple text-lg" aria-hidden="true"></i> 後で読む
+                    </button>
+                    <button onclick="copyNewsLink('${sekanewsCopyArg}', this)" class="flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 font-bold py-2.5 px-4 rounded-xl transition-colors text-sm">
+                        <i class="ph ph-share-network text-lg" aria-hidden="true"></i> せかにゅでこの記事をシェア
                     </button>
                 </div>
             `;
@@ -1036,6 +1046,17 @@
         // ※ ブラウザで index.html を直接ダブルクリックして開く(file://)場合、
         //   fetchがブロックされるため、`python3 -m http.server` 等でローカルサーバー
         //   を立てて開くか、GitHub Pages / Cloudflare Pages にデプロイして見ること。
+        // 2026-07-09: SNSや検索経由でURLに#news=<id>が付いた状態で開かれた場合、
+        // その記事の場所へ地図を移動し、サイドバーを自動で開く(個別記事への固有リンク対応)。
+        function openNewsFromUrlHash() {
+            const match = location.hash.match(/^#news=(.+)$/);
+            if (!match) return;
+            const id = decodeURIComponent(match[1]);
+            const news = newsData.find(n => n.id === id);
+            if (!news || !news.location) return;
+            map.setView([news.location.lat, news.location.lng], Math.max(map.getZoom(), 6));
+            openSidebar(news, 'right');
+        }
         async function loadNewsData() {
             let generatedAt = null;
             let nextUpdateAt = null;
@@ -1067,6 +1088,7 @@
             }
 
             renderMap();
+            openNewsFromUrlHash();
             todayDateEl.textContent = formatTodayDate();
             if (generatedAt) showLastUpdated(generatedAt, nextUpdateAt);
             loadingOverlay.style.display = 'none';
