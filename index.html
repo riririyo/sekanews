@@ -1,6 +1,15 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-B9Q440YLRX"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-B9Q440YLRX');
+    </script>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>せかにゅ - ニュースと地理</title>
@@ -10,7 +19,10 @@
     <meta property="og:title" content="せかにゅ | ニュースと地理">
     <meta property="og:description" content="世界のニュースをAIが要約し、地図上にピンで可視化するサービス。">
     <meta property="og:type" content="website">
-    <meta name="twitter:card" content="summary">
+    <meta property="og:image" content="https://sekanews.com/ogp-image.png">
+    <meta property="og:url" content="https://sekanews.com/">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="https://sekanews.com/ogp-image.png">
 
     <!-- ダークモードの初期適用(画面のちらつき防止のため、Tailwind読み込みより前に実行) -->
     <script>
@@ -292,6 +304,23 @@
         }
         .dark #portal-panel { background: #0f172a; }
         #portal-panel.portal-hidden { display: none; }
+        /* 総合パネルの左右の余白に出す広告プレースホルダー(PC版のみ)。地図画面のsponsor-space-*と同じ役割。 */
+        #portal-ad-left, #portal-ad-right {
+            position: fixed;
+            top: 0;
+            bottom: 0;
+            width: 160px;
+            z-index: 1450;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 16px 0;
+        }
+        #portal-ad-left { left: 0; }
+        #portal-ad-right { right: 0; }
+        @media (min-width: 1280px) {
+            #portal-ad-left, #portal-ad-right { display: flex; }
+        }
 
         #portal-tabs {
             display: flex;
@@ -373,7 +402,7 @@
         <div class="text-center px-6">
             <p class="text-white/50 text-[10px] font-semibold tracking-[0.3em] mb-3">AD</p>
             <p class="text-white text-lg font-bold mb-1">(仮)広告スペース</p>
-            <p class="text-white/70 text-sm mb-4">広告枠 募集中</p>
+            <p class="text-white/70 text-sm mb-4">広告枠 募集予定</p>
             <p class="text-white/50 text-xs"><span id="intro-countdown">3</span>秒後にサイトが開きます</p>
         </div>
     </div>
@@ -442,7 +471,7 @@
         </button>
     </div>
 
-    <!-- 広告スペース(仮・PC版のみ)。スポンサー募集中であることを示すプレースホルダー枠。
+    <!-- 広告スペース(仮・PC版のみ)。スポンサー募集予定であることを示すプレースホルダー枠。
          左右の余白を使うレイアウトなので地図自体は縮めていない(zoom操作の邪魔にならないよう
          上下にゆとりを持たせてヘッダー/ズームボタン/属性表示と被らない範囲だけに配置)。
          スマホ幅では画面を圧迫するため lg (1024px)未満では非表示にしている。 -->
@@ -469,6 +498,16 @@
     <!-- ポータル(総合ニュース一覧)パネル。アクセス直後はまずここが表示され、
          普通のニュースサイトのように見出しがすぐ読める。「地図でさがす」で地図表示に切替可能。 -->
     <div id="portal-panel">
+        <div id="portal-ad-left">
+            <div class="bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl w-[130px] h-[300px] flex items-center justify-center">
+                <p class="text-xs font-semibold text-gray-400 dark:text-gray-500 text-center leading-relaxed px-2">(仮)<br>広告<br>募集予定</p>
+            </div>
+        </div>
+        <div id="portal-ad-right">
+            <div class="bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl w-[130px] h-[300px] flex items-center justify-center">
+                <p class="text-xs font-semibold text-gray-400 dark:text-gray-500 text-center leading-relaxed px-2">(仮)<br>広告<br>募集予定</p>
+            </div>
+        </div>
         <div class="max-w-3xl mx-auto px-4 pt-6 pb-16" style="padding-top: calc(1.5rem + env(safe-area-inset-top));">
             <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
                 <div>
@@ -480,6 +519,11 @@
                             class="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
                             aria-label="ダーク/ライト表示切替">
                         <i class="ph ph-moon text-lg" aria-hidden="true"></i>
+                    </button>
+                    <button id="portal-bookmark-toggle" type="button" onclick="togglePortalBookmarkedOnly()"
+                            class="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                            aria-label="保存済みのニュースだけ表示">
+                        <i class="ph ph-bookmark-simple text-lg" aria-hidden="true"></i>
                     </button>
                     <button type="button" onclick="closePortal()"
                             class="shrink-0 flex items-center gap-1.5 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-xs font-bold px-4 py-2 rounded-full hover:opacity-90 transition-opacity">
@@ -503,7 +547,7 @@
             <div id="portal-list" class="space-y-3"></div>
             <div class="flex items-center justify-center gap-3 text-[10px] text-gray-400 dark:text-gray-500 mt-8 pb-2 flex-wrap">
                 <a href="info.html#terms" target="_blank" rel="noopener noreferrer" class="underline">利用規約・プライバシー</a>
-                <a href="info.html#advertise" target="_blank" rel="noopener noreferrer" class="text-amber-600 dark:text-amber-400 font-bold">📢 広告掲載は準備中</a>
+                <a href="info.html#advertise" target="_blank" rel="noopener noreferrer" class="text-amber-600 dark:text-amber-400 font-bold">📢 広告募集予定</a>
                 <span title="このサイトの見出し・要約はAIが自動生成しています。誤訳や誤りを含む場合があります。大学生が個人で運営しています。">🤖 AIが自動生成 / 個人運営</span>
             </div>
         </div>
@@ -524,7 +568,7 @@
     <!-- 利用規約・広告についての足元リンク -->
     <div id="footer-links">
         <a href="info.html#terms" target="_blank" rel="noopener noreferrer">利用規約・プライバシー</a>
-        <a href="info.html#advertise" target="_blank" rel="noopener noreferrer" class="advertise-link">📢 広告掲載は準備中</a>
+        <a href="info.html#advertise" target="_blank" rel="noopener noreferrer" class="advertise-link">📢 広告募集予定</a>
         <span class="ai-disclaimer-note" title="このサイトの見出し・要約はAIが自動生成しています。誤訳や誤りを含む場合があります。大学生が個人で運営しています。">🤖 AIが自動生成 / 個人運営</span>
     </div>
 
@@ -774,6 +818,7 @@
         const portalSearchInput = document.getElementById('portal-search-input');
         function handleSearchInput(value) {
             searchQuery = value.trim();
+            portalListLimit = 60;
             if (searchInput && searchInput.value !== value) searchInput.value = value;
             if (portalSearchInput && portalSearchInput.value !== value) portalSearchInput.value = value;
             renderMap();
@@ -882,6 +927,36 @@
             }).join('');
         }
 
+        // --- 「後で読む」ブックマーク(localStorageに保存。実際に機能するようにした) ---
+        function getBookmarks() {
+            try { return new Set(JSON.parse(localStorage.getItem('sekanews_bookmarks') || '[]')); }
+            catch (e) { return new Set(); }
+        }
+        function saveBookmarks(set) {
+            try { localStorage.setItem('sekanews_bookmarks', JSON.stringify(Array.from(set))); }
+            catch (e) { /* localStorage無効環境は無視 */ }
+        }
+        function isBookmarked(id) { return getBookmarks().has(id); }
+        window.toggleBookmark = function (id, btnEl) {
+            const bookmarks = getBookmarks();
+            const nowSaved = !bookmarks.has(id);
+            if (nowSaved) bookmarks.add(id); else bookmarks.delete(id);
+            saveBookmarks(bookmarks);
+            if (btnEl) {
+                btnEl.innerHTML = nowSaved
+                    ? '<i class="ph-fill ph-bookmark-simple text-lg" aria-hidden="true"></i> 保存済み'
+                    : '<i class="ph ph-bookmark-simple text-lg" aria-hidden="true"></i> 後で読む';
+                btnEl.classList.toggle('bg-amber-100', nowSaved);
+                btnEl.classList.toggle('dark:bg-amber-900/40', nowSaved);
+                btnEl.classList.toggle('text-amber-700', nowSaved);
+                btnEl.classList.toggle('dark:text-amber-300', nowSaved);
+                btnEl.classList.toggle('bg-gray-100', !nowSaved);
+                btnEl.classList.toggle('dark:bg-gray-800', !nowSaved);
+                btnEl.classList.toggle('text-gray-700', !nowSaved);
+                btnEl.classList.toggle('dark:text-gray-200', !nowSaved);
+            }
+        };
+
         function openSidebar(news, side = 'left') {
             lastFocusedElement = document.activeElement;
 
@@ -984,8 +1059,8 @@
                             <i class="ph ph-link text-base" aria-hidden="true"></i> コピー
                         </button>
                     </div>
-                    <button onclick="alert('ブックマークに保存しました！')" class="flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 font-bold py-2.5 px-4 rounded-xl transition-colors text-sm">
-                        <i class="ph ph-bookmark-simple text-lg" aria-hidden="true"></i> 後で読む
+                    <button onclick="toggleBookmark(${news.id}, this)" class="flex items-center justify-center gap-2 ${isBookmarked(news.id) ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200'} hover:opacity-90 font-bold py-2.5 px-4 rounded-xl transition-colors text-sm">
+                        <i class="ph${isBookmarked(news.id) ? '-fill' : ''} ph-bookmark-simple text-lg" aria-hidden="true"></i> ${isBookmarked(news.id) ? '保存済み' : '後で読む'}
                     </button>
                     <button onclick="copyNewsLink('${sekanewsCopyArg}', this)" class="flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 font-bold py-2.5 px-4 rounded-xl transition-colors text-sm">
                         <i class="ph ph-share-network text-lg" aria-hidden="true"></i> せかにゅでこの記事をシェア
@@ -1178,9 +1253,17 @@
         // 一覧をまず見せるための機能。カテゴリタブ・注目ニュース・全件リストで構成する。
         // ------------------------------------------------------------------
         let portalActiveCategory = null; // null = 総合(全カテゴリ)
+        let portalListLimit = 60; // 総合パネルのリストは60件ずつ表示し「もっと見る」で追加
+        let portalShowBookmarkedOnly = false;
+        window.togglePortalBookmarkedOnly = function () {
+            portalShowBookmarkedOnly = !portalShowBookmarkedOnly;
+            portalListLimit = 60;
+            renderPortal();
+        };
 
         window.setPortalCategory = function (category) {
             portalActiveCategory = (portalActiveCategory === category) ? null : category;
+            portalListLimit = 60;
             renderPortal();
         };
 
@@ -1260,6 +1343,11 @@
             requestAnimationFrame(tick);
         };
 
+        window.expandPortalList = function () {
+            portalListLimit += 60;
+            renderPortal();
+        };
+
         function portalNewsScore(news) {
             const iso = news.firstSeenAt || news.publishedAt;
             const d = iso ? new Date(iso).getTime() : NaN;
@@ -1272,6 +1360,15 @@
             const listEl = document.getElementById('portal-list');
             if (!tabsEl || !featuredEl || !listEl) return;
 
+            const bookmarkToggleBtn = document.getElementById('portal-bookmark-toggle');
+            if (bookmarkToggleBtn) {
+                bookmarkToggleBtn.classList.toggle('bg-amber-100', portalShowBookmarkedOnly);
+                bookmarkToggleBtn.classList.toggle('dark:bg-amber-900/40', portalShowBookmarkedOnly);
+                bookmarkToggleBtn.classList.toggle('text-amber-700', portalShowBookmarkedOnly);
+                bookmarkToggleBtn.classList.toggle('dark:text-amber-300', portalShowBookmarkedOnly);
+                bookmarkToggleBtn.querySelector('i').className = portalShowBookmarkedOnly ? 'ph-fill ph-bookmark-simple text-lg' : 'ph ph-bookmark-simple text-lg';
+            }
+
             const categories = Array.from(allCategoriesSet);
             tabsEl.innerHTML = ['<button type="button" class="portal-tab ' + (portalActiveCategory === null ? 'portal-tab-active' : '') + '" onclick="setPortalCategory(null)">総合</button>']
                 .concat(categories.map(cat => {
@@ -1283,6 +1380,7 @@
             const pool = newsData.filter(n => {
                 if (!n.location) return false;
                 if (portalActiveCategory !== null && n.category !== portalActiveCategory) return false;
+                if (portalShowBookmarkedOnly && !isBookmarked(n.id)) return false;
                 if (searchQuery) {
                     const q = searchQuery.toLowerCase();
                     const haystack = `${n.title || ''} ${n.originalTitle || ''} ${n.aiSummary || ''} ${n.location.name || ''}`.toLowerCase();
@@ -1328,11 +1426,12 @@
                 `;
             }).join('');
 
-            listEl.innerHTML = rest.map(news => {
+                        const visibleRest = rest.slice(0, portalListLimit);
+            listEl.innerHTML = visibleRest.map(news => {
                 const relTime = formatRelativeTime(news.publishedAt);
                 const isSponsored = !!news.isSponsored;
                 const isSpiky = !isSponsored && spikyPlaces.has(news.location.name);
-                                const tag = isSponsored
+                const tag = isSponsored
                     ? '<span class="text-[9px] font-bold text-amber-600 dark:text-amber-400">PR</span>'
                     : (isSpiky ? '<span class="text-[9px] font-bold text-red-600 dark:text-red-400">🔥急上昇</span>' : '');
                 const safeImg = news.imageUrl ? safeHttpUrl(news.imageUrl, '') : '';
@@ -1355,7 +1454,9 @@
                         </div>
                     </div>
                 `;
-            }).join('');
+            }).join('') + (rest.length > portalListLimit
+                ? `<button type="button" onclick="expandPortalList()" class="w-full text-center text-xs font-bold text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl py-3 transition-colors">もっと見る(残り${rest.length - portalListLimit}件)</button>`
+                : '');
         }
 
         function normalizeNewsPayload(data) {
