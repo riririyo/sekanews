@@ -62,6 +62,7 @@ jobs:
           cp info.html _site/
           cp news_data.json _site/
           cp geocode_cache.json _site/
+          cp ogp-image.png _site/ 2>/dev/null || true
           # 2026-07-09: gh-pagesはforce_orphanで毎回作り直されるため、GitHubが
           # カスタムドメイン用に管理しているCNAMEファイルもここに含めないと
           # 毎時デプロイのたびにカスタムドメイン設定が失われてしまう。
