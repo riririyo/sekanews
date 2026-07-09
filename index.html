@@ -13,11 +13,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>せかにゅ - ニュースと地理</title>
-    <meta name="description" content="世界のニュースをAIが見出しから要約し、地図上にリアルタイムで可視化する「せかにゅ」。">
+    <meta name="description" content="世界のニュースをAIが見出し翻訳し、地図上にリアルタイムで可視化する「せかにゅ」。">
 
     <!-- OGP / Twitter Card -->
     <meta property="og:title" content="せかにゅ | ニュースと地理">
-    <meta property="og:description" content="世界のニュースをAIが要約し、地図上にピンで可視化するサービス。">
+    <meta property="og:description" content="世界のニュースをAIが見出し翻訳し、地図上にピンで可視化するサービス。">
     <meta property="og:type" content="website">
     <meta property="og:image" content="https://sekanews.com/ogp-image.png">
     <meta property="og:url" content="https://sekanews.com/">
@@ -621,8 +621,6 @@
                 category: "エンタメ",
                 title: "大通公園で新感覚の没入型イルミネーションが開幕",
                 originalTitle: "大通公園で新感覚の没入型イルミネーションが開幕",
-                aiSummary: "最新のプロジェクションマッピング技術を活用した光の祭典。AIが来場者の動きに反応して光の演出を変化させる点が話題を呼んでいます。",
-                aiSummaryIsHeadlineOnly: true,
                 publishedAt: null,
                 sourceName: "",
                 url: "https://example.com/sapporo-news",
@@ -635,8 +633,6 @@
                 category: "経済",
                 title: "サウジ、巨大スマートシティ「NEOM」に10兆円規模の追加投資",
                 originalTitle: "サウジ、巨大スマートシティ「NEOM」に10兆円規模の追加投資",
-                aiSummary: "脱石油依存を掲げる国家戦略ビジョン2030の中核プロジェクト。再生可能エネルギーのみで稼働する直線型都市の建設が急ピッチで進んでいます。",
-                aiSummaryIsHeadlineOnly: true,
                 publishedAt: null,
                 sourceName: "",
                 url: "https://example.com/saudi-news",
@@ -649,8 +645,6 @@
                 category: "テック",
                 title: "ナイロビ発のフィンテック企業が大型資金調達を実施",
                 originalTitle: "ナイロビ発のフィンテック企業が大型資金調達を実施",
-                aiSummary: "アフリカ全土でのモバイル送金プラットフォーム拡大に向け、欧米のベンチャーキャピタルから約150億円を調達。「シリコンサバンナ」の勢いが加速。",
-                aiSummaryIsHeadlineOnly: true,
                 publishedAt: null,
                 sourceName: "",
                 url: "https://example.com/kenya-news",
@@ -663,8 +657,6 @@
                 category: "テック",
                 title: "次世代AIモデルが発表、複雑な推論タスクで人間超え",
                 originalTitle: "次世代AIモデルが発表、複雑な推論タスクで人間超え",
-                aiSummary: "大手AI研究所が最新モデルを公開。数学的推論やプログラミングにおいて、専門家レベルのスコアを記録したと発表されました。",
-                aiSummaryIsHeadlineOnly: true,
                 publishedAt: null,
                 sourceName: "",
                 url: "https://example.com/sf-news",
@@ -677,8 +669,6 @@
                 category: "環境",
                 title: "ケープタウン沖で新たな海洋エネルギー発電の試験開始",
                 originalTitle: "ケープタウン沖で新たな海洋エネルギー発電の試験開始",
-                aiSummary: "豊かな海洋資源を活かし、波力・潮力を用いた持続可能なエネルギープロジェクトがスタート。深刻な電力不足の解消に期待が寄せられています。",
-                aiSummaryIsHeadlineOnly: true,
                 publishedAt: null,
                 sourceName: "",
                 url: "https://example.com/sa-news",
@@ -809,7 +799,7 @@
             if (activeCategories && !activeCategories.has(news.category)) return false;
             if (searchQuery) {
                 const q = searchQuery.toLowerCase();
-                const haystack = `${news.title || ''} ${news.originalTitle || ''} ${news.aiSummary || ''} ${news.location.name || ''}`.toLowerCase();
+                const haystack = `${news.title || ''} ${news.originalTitle || ''} ${news.location.name || ''}`.toLowerCase();
                 if (!haystack.includes(q)) return false;
             }
             return true;
@@ -971,9 +961,7 @@
             const reportMailto = `mailto:sekai.news.info@gmail.com` +
                 `?subject=${encodeURIComponent('せかにゅ 誤り報告: ' + (news.title || ''))}` +
                 `&body=${encodeURIComponent('記事ID: ' + news.id + '\n元記事URL: ' + (news.url || '') + '\n\n【誤りの内容】\n')}`;
-            const headlineOnlyNote = news.aiSummaryIsHeadlineOnly
-                ? '見出しから推測したAI要約です(一般的な背景情報の補足を含む場合があります)。タイトルもAIによる日本語訳です。詳細は元記事でご確認ください。'
-                : 'このタイトル・要約はAIが自動生成しています。誤訳や誤りが含まれる場合があります。';
+            const headlineOnlyNote = 'タイトルはAIによる日本語訳です。誤訳や誤りが含まれる場合があります。詳細は元記事でご確認ください。';
             const disclaimer = `<p class="text-[11px] text-purple-400 dark:text-purple-300/80 mt-2">※ ${headlineOnlyNote} <a href="${reportMailto}" class="underline">誤りを報告</a></p>`;
 
             const relTime = formatRelativeTime(news.publishedAt);
@@ -1036,10 +1024,10 @@
 
                 <div class="bg-purple-50 dark:bg-purple-950/40 p-4 rounded-xl border border-purple-100 dark:border-purple-900">
                     <h3 class="text-sm font-bold text-purple-700 dark:text-purple-300 flex items-center gap-1.5 mb-2">
-                        <i class="ph-fill ph-sparkle" aria-hidden="true"></i> AI要約
+                        <i class="ph-fill ph-sparkle" aria-hidden="true"></i> AI翻訳タイトル
                     </h3>
-                    <p class="text-sm text-gray-700 dark:text-gray-200 leading-relaxed font-medium">
-                        ${escapeHtml(news.aiSummary)}
+                    <p class="text-sm text-gray-700 dark:text-gray-200 leading-relaxed">
+                        詳しい内容は下の「元記事を読む」から情報源のサイトでご確認ください。
                     </p>
                     ${disclaimer}
                 </div>
@@ -1383,7 +1371,7 @@
                 if (portalShowBookmarkedOnly && !isBookmarked(n.id)) return false;
                 if (searchQuery) {
                     const q = searchQuery.toLowerCase();
-                    const haystack = `${n.title || ''} ${n.originalTitle || ''} ${n.aiSummary || ''} ${n.location.name || ''}`.toLowerCase();
+                    const haystack = `${n.title || ''} ${n.originalTitle || ''} ${n.location.name || ''}`.toLowerCase();
                     if (!haystack.includes(q)) return false;
                 }
                 return true;
@@ -1405,7 +1393,6 @@
             featuredEl.innerHTML = featured.map(news => {
                 const relTime = formatRelativeTime(news.publishedAt);
                 const isSpiky = spikyPlaces.has(news.location.name);
-                const summary = (news.aiSummary || '').slice(0, 54);
                 const safeImg = news.imageUrl ? safeHttpUrl(news.imageUrl, '') : '';
                 const imgHtml = safeImg
                     ? `<div class="h-32 rounded-lg overflow-hidden mb-2 bg-gray-200 dark:bg-gray-700"><img src="${escapeHtml(safeImg)}" alt="" class="w-full h-full object-cover" loading="lazy" onerror="this.parentElement.style.display='none';"></div>`
@@ -1421,7 +1408,6 @@
                             ${isSpiky ? '<span class="text-[10px] font-bold text-red-600 dark:text-red-400">🔥急上昇</span>' : ''}
                         </div>
                         <h3 class="font-extrabold text-sm leading-snug text-gray-900 dark:text-gray-100 mb-1">${escapeHtml(news.title)}</h3>
-                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">${escapeHtml(summary)}${(news.aiSummary || '').length > 54 ? '…' : ''}</p>
                     </div>
                 `;
             }).join('');
