@@ -2,7 +2,7 @@
 """
 pipeline.py
 ===========
-① ニュース取得(Google News RSS) → ② AI要約・ジャンル・地名判定・タイトル和訳(Groq)
+① ニュース取得(Google News RSS) → ② AIジャンル・地名判定・タイトル和訳(Groq)
 → ③ 重複除去・地域ノルマで選抜 → ④ 座標変換(Nominatim) → ⑤ 前回分・スポンサーピンと
 マージしてnews_data.json出力
 
@@ -245,7 +245,7 @@ def collect_all_articles():
 
 
 # ---------------------------------------------------------------------------
-# ② AI要約・ジャンル・地名判定・タイトル和訳 (Groq)
+# ② AIジャンル・地名判定・タイトル和訳 (Groq)
 # ---------------------------------------------------------------------------
 def _build_prompt(batch):
     items_text = "\n".join(
@@ -278,17 +278,11 @@ def _build_prompt(batch):
         "4. title_ja: 見出しを自然な日本語に翻訳したもの。要約ではなく翻訳なので、"
         "見出しの情報を削らずに日本語にすること。見出しが既に日本語の場合はそのまま"
         "(表記の乱れがあれば軽く整える程度でよい)。\n"
-        "5. summary_ja: 見出しの内容について日本語で3〜4文(120〜200字程度)で説明する"
-        "文章。見出しに書かれていない具体的な数字・固有名詞・引用・結果を勝手に創作しないこと。"
-        "ただし、見出しに出てくる人物・組織・出来事の種類について一般的に知られている"
-        "背景情報(どんな職業/組織か、通常どんな文脈で報じられる話題かなど)を補って、"
-        "読み応えのある説明にするのは良い。断定できない部分は「〜とみられる」"
-        "「〜と考えられる」のような表現を使い、見出しに書かれた事実と区別すること。\n"
-        "見出しが日本語以外の言語で書かれていても、内容を理解した上でtitle_ja/"
-        "summary_jaは日本語で書くこと。\n"
+        "見出しが日本語以外の言語で書かれていても、内容を理解した上でtitle_jaは"
+        "日本語で書くこと。\n"
         "\n"
         '出力は必ず {"results": [ {"index": 0, "genre": "...", "region": "...", '
-        '"place": "...", "title_ja": "...", "summary_ja": "..."}, ... ] } '
+        '"place": "...", "title_ja": "..."}, ... ] } '
         "という形のJSONオブジェクトのみ。説明文やコードブロック記号は一切付けないこと。"
     )
     user_prompt = f"以下の記事を分析してください:\n{items_text}"
@@ -406,7 +400,6 @@ def _process_ai_batch(batch, batch_num, total_batches):
         region = r.get("region") or ""
         place = (r.get("place") or "").strip()
         title_ja = (r.get("title_ja") or "").strip()
-        summary = (r.get("summary_ja") or "").strip()
 
         # --- AIの返りを検証(不正なジャンル/地域は矯正 or 除外) ---
         if genre not in VALID_GENRES:
@@ -415,7 +408,7 @@ def _process_ai_batch(batch, batch_num, total_batches):
             continue  # 地域を集計できない記事はノルマ選抜の対象外にする
 
         # 地名が取れない記事はピンにしない、という設計上のルール
-        if not place or not summary:
+        if not place:
             continue
 
         batch_enriched.append({
@@ -424,7 +417,6 @@ def _process_ai_batch(batch, batch_num, total_batches):
             "ai_region": region,
             "ai_place": place,
             "ai_title_ja": title_ja or article.get("title", ""),
-            "ai_summary": summary,
         })
 
     return batch_enriched, blocked
@@ -852,8 +844,6 @@ def build_new_items(selected, cache):
             "title": display_title,
             "originalTitle": original_title,
             "sourceName": a.get("domain", ""),
-            "aiSummary": a["ai_summary"],
-            "aiSummaryIsHeadlineOnly": True,  # フロントで「見出しのみからのAI推測」と明示するためのフラグ
             "publishedAt": a.get("published_at"),
             "firstSeenAt": now_iso,  # このパイプラインが初めてこの記事を捉えた時刻
             "url": url,
@@ -1025,7 +1015,7 @@ def main():
         print(f"  [LIMIT] 新規候補{before_cap}件をGroq無料枠に合わせて{len(articles)}件に制限"
               f"(ローカル{n_local}/トップ{len(articles) - n_local})")
 
-    print("=== ③ AI要約・ジャンル・地名判定・タイトル和訳 (Groq) ===")
+    print("=== ③ AIジャンル・地名判定・タイトル和訳 (Groq) ===")
     if articles:
         enriched = enrich_articles_with_ai(articles)
         if not enriched:
