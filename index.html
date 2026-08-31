@@ -304,24 +304,6 @@
         }
         .dark #portal-panel { background: #0f172a; }
         #portal-panel.portal-hidden { display: none; }
-        /* 総合パネルの左右の余白に出す広告プレースホルダー(PC版のみ)。地図画面のsponsor-space-*と同じ役割。 */
-        #portal-ad-left, #portal-ad-right {
-            position: fixed;
-            top: 0;
-            bottom: 0;
-            width: 160px;
-            z-index: 1450;
-            display: none;
-            align-items: center;
-            justify-content: center;
-            padding: 16px 0;
-        }
-        #portal-ad-left { left: 0; }
-        #portal-ad-right { right: 0; }
-        @media (min-width: 1280px) {
-            #portal-ad-left, #portal-ad-right { display: flex; }
-        }
-
         #portal-tabs {
             display: flex;
             gap: 8px;
@@ -394,37 +376,6 @@
     </style>
 </head>
 <body class="bg-gray-100 dark:bg-gray-900 overflow-hidden relative">
-    <!-- 2026-07-08: アクセス時に3秒間だけ広告を表示し、自動で消えてから地図が見られるようにする
-         起動時オーバーレイ。PC/スマホ共通。実際の広告枠が決まるまでのプレースホルダー表示。
-         アドブロックの汎用フィルタ(id/classに"ad"を含む要素を隠すルール)に巻き込まれないよう、
-         id名はあえて「ad」を含まない名前にしている(これは第三者広告ではなく自社の告知なので)。 -->
-    <div id="site-intro-overlay" class="fixed inset-0 z-[9999] flex items-center justify-center bg-gray-900 transition-opacity duration-500 ease-out">
-        <div class="text-center px-6">
-            <p class="text-white/50 text-[10px] font-semibold tracking-[0.3em] mb-3">AD</p>
-            <p class="text-white text-lg font-bold mb-1">(仮)広告スペース</p>
-            <p class="text-white/70 text-sm mb-4">広告枠 募集予定</p>
-            <p class="text-white/50 text-xs"><span id="intro-countdown">3</span>秒後にサイトが開きます</p>
-        </div>
-    </div>
-    <script>
-        (function () {
-            var splash = document.getElementById('site-intro-overlay');
-            if (!splash) return;
-            var countdownEl = document.getElementById('intro-countdown');
-            var remaining = 3;
-            var countdownTimer = setInterval(function () {
-                remaining -= 1;
-                if (countdownEl) countdownEl.textContent = Math.max(remaining, 0);
-                if (remaining <= 0) clearInterval(countdownTimer);
-            }, 1000);
-            setTimeout(function () {
-                clearInterval(countdownTimer);
-                splash.style.opacity = '0';
-                setTimeout(function () { splash.remove(); }, 500);
-            }, 3000);
-        })();
-    </script>
-
     <!-- ヘッダーUI -->
     <div class="overlay-ui w-[92%] max-w-2xl">
         <div id="header-card" class="bg-white/90 dark:bg-gray-800/90 backdrop-blur-md rounded-2xl shadow-lg p-4 flex flex-col gap-3 border border-gray-200 dark:border-gray-700">
@@ -471,43 +422,12 @@
         </button>
     </div>
 
-    <!-- 広告スペース(仮・PC版のみ)。スポンサー募集予定であることを示すプレースホルダー枠。
-         左右の余白を使うレイアウトなので地図自体は縮めていない(zoom操作の邪魔にならないよう
-         上下にゆとりを持たせてヘッダー/ズームボタン/属性表示と被らない範囲だけに配置)。
-         スマホ幅では画面を圧迫するため lg (1024px)未満では非表示にしている。 -->
-    <div id="sponsor-space-left" class="hidden lg:block fixed left-0 top-32 bottom-28 w-[120px] z-[800] pointer-events-none">
-        <div class="h-full flex items-center justify-center pointer-events-auto bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-r-xl">
-            <p class="text-xs font-semibold text-gray-400 dark:text-gray-500 text-center leading-relaxed px-2">(仮)<br>広告<br>募集予定</p>
-        </div>
-    </div>
-    <div id="sponsor-space-right" class="hidden lg:block fixed right-0 top-32 bottom-28 w-[120px] z-[800] pointer-events-none">
-        <div class="h-full flex items-center justify-center pointer-events-auto bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-l-xl">
-            <p class="text-xs font-semibold text-gray-400 dark:text-gray-500 text-center leading-relaxed px-2">(仮)<br>広告<br>募集予定</p>
-        </div>
-    </div>
-    <!-- スマホ版の広告プレースホルダー(不快感を与えないよう小サイズ・左下の隅に配置、地図操作の邪魔にならない位置) -->
-    <div id="sponsor-space-mobile" class="lg:hidden fixed bottom-2 left-2 z-[900] pointer-events-none">
-        <div class="pointer-events-auto bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm border border-dashed border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1 flex items-center gap-1">
-            <p class="text-[9px] font-semibold text-gray-400 dark:text-gray-500 leading-none whitespace-nowrap">(仮)広告募集予定</p>
-        </div>
-    </div>
-
     <!-- 地図コンテナ -->
     <div id="map" role="application" aria-label="世界のニュース地図"></div>
 
     <!-- ポータル(総合ニュース一覧)パネル。アクセス直後はまずここが表示され、
          普通のニュースサイトのように見出しがすぐ読める。「地図でさがす」で地図表示に切替可能。 -->
     <div id="portal-panel">
-        <div id="portal-ad-left">
-            <div class="bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl w-[130px] h-[300px] flex items-center justify-center">
-                <p class="text-xs font-semibold text-gray-400 dark:text-gray-500 text-center leading-relaxed px-2">(仮)<br>広告<br>募集予定</p>
-            </div>
-        </div>
-        <div id="portal-ad-right">
-            <div class="bg-white/70 dark:bg-gray-800/70 backdrop-blur-sm border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl w-[130px] h-[300px] flex items-center justify-center">
-                <p class="text-xs font-semibold text-gray-400 dark:text-gray-500 text-center leading-relaxed px-2">(仮)<br>広告<br>募集予定</p>
-            </div>
-        </div>
         <div class="max-w-3xl mx-auto px-4 pt-6 pb-16" style="padding-top: calc(1.5rem + env(safe-area-inset-top));">
             <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
                 <div>
@@ -547,7 +467,6 @@
             <div id="portal-list" class="space-y-3"></div>
             <div class="flex items-center justify-center gap-3 text-[10px] text-gray-400 dark:text-gray-500 mt-8 pb-2 flex-wrap">
                 <a href="info.html#terms" target="_blank" rel="noopener noreferrer" class="underline">利用規約・プライバシー</a>
-                <a href="info.html#advertise" target="_blank" rel="noopener noreferrer" class="text-amber-600 dark:text-amber-400 font-bold">📢 広告募集予定</a>
                 <span title="このサイトの見出し・要約はAIが自動生成しています。誤訳や誤りを含む場合があります。大学生が個人で運営しています。">🤖 AIが自動生成 / 個人運営</span>
             </div>
         </div>
@@ -568,7 +487,6 @@
     <!-- 利用規約・広告についての足元リンク -->
     <div id="footer-links">
         <a href="info.html#terms" target="_blank" rel="noopener noreferrer">利用規約・プライバシー</a>
-        <a href="info.html#advertise" target="_blank" rel="noopener noreferrer" class="advertise-link">📢 広告募集予定</a>
         <span class="ai-disclaimer-note" title="このサイトの見出し・要約はAIが自動生成しています。誤訳や誤りを含む場合があります。大学生が個人で運営しています。">🤖 AIが自動生成 / 個人運営</span>
     </div>
 
