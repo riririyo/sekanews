@@ -16,7 +16,10 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
 # 使用するAIモデル。将来Geminiなど別プロバイダに乗り換える場合は、
 # ここに加えて pipeline.py の GROQ_ENDPOINT / call_groq_batch() のURLも変更する。
-AI_MODEL = "llama-3.3-70b-versatile"
+# 2026-09-01: Groqがllama-3.3-70b-versatileを2026-08-16付で廃止(404 Not Found)し、
+# 記事のAI処理(地名判定・ジャンル・タイトル和訳)が全滅 -> 新着記事0件になっていた。
+# Groq公式の移行先である openai/gpt-oss-120b に切り替えて復旧。
+AI_MODEL = "openai/gpt-oss-120b"
 
 # 1回のAI呼び出しにまとめて渡す記事数。多すぎるとAIの精度が落ちるので8〜10が目安。
 ARTICLES_PER_AI_BATCH = 10
