@@ -427,7 +427,7 @@
 
     <!-- ポータル(総合ニュース一覧)パネル。アクセス直後はまずここが表示され、
          普通のニュースサイトのように見出しがすぐ読める。「地図でさがす」で地図表示に切替可能。 -->
-    <div id="portal-panel">
+    <div id="portal-panel" class="portal-hidden">
         <div class="max-w-3xl mx-auto px-4 pt-6 pb-16" style="padding-top: calc(1.5rem + env(safe-area-inset-top));">
             <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
                 <div>
@@ -688,9 +688,9 @@
         const map = L.map('map', { zoomControl: false }).setView([20.0, 60.0], 3);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            subdomains: 'abcd',
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            
             maxZoom: 19
         }).addTo(map);
 
@@ -1193,8 +1193,8 @@
                 doubleClickZoom: false, boxZoom: false, keyboard: false,
                 touchZoom: false, attributionControl: false, tap: false
             }).setView([20.0, 40.0], 1);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-                subdomains: 'abcd', maxZoom: 19
+            L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                 maxZoom: 19
             }).addTo(portalPreviewMap);
             setTimeout(() => portalPreviewMap.invalidateSize(), 30);
         }
