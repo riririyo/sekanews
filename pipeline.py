@@ -511,6 +511,8 @@ def _process_ai_batch(batch, batch_num, total_batches):
     blocked = 0
 
     for r in results:
+        if not isinstance(r, dict):
+            continue  # モデルが想定外の形式(文字列など)を返した要素は無視
         idx = r.get("index")
         if not isinstance(idx, int) or not (0 <= idx < len(batch)):
             continue
@@ -1136,9 +1138,15 @@ def main():
         # 単純なシャッフル切り詰めだと、候補数で圧倒的に多いトップニュースばかりが残り、
         # 数の少ないローカル記事がAI判定に到達しにくい。LOCAL_SELECT_RATIOと同じ比率で
         # ローカルを優先的に残しつつトップの枠も確保して切り詰める(最終選抜と方針を揃える)。
-        local_cands = [a for a in articles if a.get("_source_type") == "local"]
-        top_cands = [a for a in articles if a.get("_source_type") != "local"]
-        articles = _split_by_ratio(local_cands, top_cands, MAX_NEW_ARTICLES_PER_RUN, LOCAL_SELECT_RATIO)
+        # Reddit(面白い話題系)は数が少なく、ランダムな切り詰めだと埋もれてしまうので、
+        # 先に枠を確保してから残りをローカル/トップで切り詰める。
+        reddit_cands = [a for a in articles if str(a.get("_country_label", "")).startswith("r/")][:40]
+        reddit_urls = {a.get("url") for a in reddit_cands}
+        rest = [a for a in articles if a.get("url") not in reddit_urls]
+        local_cands = [a for a in rest if a.get("_source_type") == "local"]
+        top_cands = [a for a in rest if a.get("_source_type") != "local"]
+        articles = reddit_cands + _split_by_ratio(
+            local_cands, top_cands, max(MAX_NEW_ARTICLES_PER_RUN - len(reddit_cands), 0), LOCAL_SELECT_RATIO)
         n_local = sum(1 for a in articles if a.get("_source_type") == "local")
         print(f"  [LIMIT] 新規候補{before_cap}件をGroq無料枠に合わせて{len(articles)}件に制限"
               f"(ローカル{n_local}/トップ{len(articles) - n_local})")
