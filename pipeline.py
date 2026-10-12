@@ -240,8 +240,95 @@ def collect_all_articles():
 
         time.sleep(NEWS_REQUEST_DELAY_SEC)
 
+    # Reddit(面白い話題系)。失敗しても他の取得結果には影響しない。
+    try:
+        reddit_added = 0
+        for a in fetch_reddit_articles():
+            u = a.get("url")
+            if u and u not in seen_urls:
+                seen_urls.add(u)
+                a["_source_type"] = "top"
+                all_articles.append(a)
+                reddit_added += 1
+        print(f"  [FETCH] Reddit候補: {reddit_added}件")
+    except Exception as e:
+        print(f"  [WARN] Reddit取得で予期せぬエラー(スキップ): {e}")
+
     print(f"  [FETCH] 合計候補(トップ+ローカル): {len(all_articles)}件")
     return all_articles
+
+
+# ---------------------------------------------------------------------------
+# ①-b Reddit(面白い話題が集まるサブレディット)から候補を追加
+# ---------------------------------------------------------------------------
+# 日本の大手メディアでは報じられにくい「へえ」「おもしろ」系の話題を増やす狙い。
+# 公式RSS(キー不要)を使う。GitHub Actions等のIPはRedditに弾かれる(403/429)ことが
+# あるため、失敗しても他の取得は止めず、ログに結果を残してスキップする。
+REDDIT_SUBREDDITS = [
+    "nottheonion",
+    "todayilearned",
+    "UpliftingNews",
+    "offbeat",
+    "interestingasfuck",
+    "worldnews",
+]
+REDDIT_MAX_ITEMS_PER_SUB = 25
+REDDIT_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; sekanews-bot/1.0; +https://sekanews.com)"}
+_ATOM_NS = "{http://www.w3.org/2005/Atom}"
+
+
+def _parse_reddit_atom(content, sub):
+    articles = []
+    root = ET.fromstring(content)
+    for entry in root.findall(_ATOM_NS + "entry")[:REDDIT_MAX_ITEMS_PER_SUB]:
+        title = (entry.findtext(_ATOM_NS + "title") or "").strip()
+        link_el = entry.find(_ATOM_NS + "link")
+        permalink = link_el.get("href") if link_el is not None else ""
+        body = entry.findtext(_ATOM_NS + "content") or ""
+        # 投稿が外部記事へのリンクなら、そちらを元記事URLとして使う
+        url = permalink
+        for m in re.finditer(r'href="(https?://[^"]+)"[^>]*>\[link\]', body):
+            ext = m.group(1)
+            if "reddit.com" not in ext and "redd.it" not in ext:
+                url = ext
+            break
+        if not title or not url:
+            continue
+        domain = urlparse(url).netloc.replace("www.", "")
+        published = None
+        updated = entry.findtext(_ATOM_NS + "updated") or ""
+        try:
+            published = datetime.fromisoformat(updated.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat()
+        except Exception:
+            published = None
+        articles.append({
+            "title": title,
+            "url": url,
+            "domain": domain or "reddit.com",
+            "socialimage": None,
+            "published_at": published,
+            "_region_hint": "",
+            "_country_label": "r/" + sub,
+        })
+    return articles
+
+
+def fetch_reddit_articles():
+    results = []
+    for sub in REDDIT_SUBREDDITS:
+        url = f"https://www.reddit.com/r/{sub}/top/.rss?t=day"
+        try:
+            resp = requests.get(url, timeout=20, headers=REDDIT_HEADERS)
+            if resp.status_code != 200:
+                print(f"  [WARN] Reddit取得失敗 r/{sub}: HTTP {resp.status_code}")
+                continue
+            items = _parse_reddit_atom(resp.content, sub)
+            print(f"  [REDDIT] r/{sub}: {len(items)}件")
+            results.extend(items)
+        except Exception as e:
+            print(f"  [WARN] Reddit取得失敗 r/{sub}: {type(e).__name__}: {e}")
+        time.sleep(2)
+    return results
 
 
 # ---------------------------------------------------------------------------
