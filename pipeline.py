@@ -319,6 +319,9 @@ def fetch_reddit_articles():
         url = f"https://www.reddit.com/r/{sub}/top/.rss?t=day"
         try:
             resp = requests.get(url, timeout=20, headers=REDDIT_HEADERS)
+            if resp.status_code == 429:
+                time.sleep(20)
+                resp = requests.get(url, timeout=20, headers=REDDIT_HEADERS)
             if resp.status_code != 200:
                 print(f"  [WARN] Reddit取得失敗 r/{sub}: HTTP {resp.status_code}")
                 continue
@@ -327,7 +330,7 @@ def fetch_reddit_articles():
             results.extend(items)
         except Exception as e:
             print(f"  [WARN] Reddit取得失敗 r/{sub}: {type(e).__name__}: {e}")
-        time.sleep(2)
+        time.sleep(8)
     return results
 
 
@@ -382,6 +385,25 @@ def _build_prompt(batch):
     return system_prompt, user_prompt
 
 
+# Groq無料枠は「モデルごと」に1日のトークン上限(TPD)がある。1つのモデルが尽きたら
+# (長いRetry-Afterの429)、次のモデルに切り替えて処理を続ける。
+import config as _cfg
+AI_MODELS = list(getattr(_cfg, "AI_MODELS", None) or [AI_MODEL, "openai/gpt-oss-20b"])
+_EXHAUSTED_MODELS = set()
+
+
+def _pick_model():
+    for m in AI_MODELS:
+        if m not in _EXHAUSTED_MODELS:
+            return m
+    return AI_MODELS[0]
+
+
+def _model_opts(model):
+    # gpt-ossは考える(reasoning)分も出力トークンに数えられるので、軽くして節約する
+    return {"reasoning_effort": "low"} if model.startswith("openai/gpt-oss") else {}
+
+
 def call_groq_batch(batch):
     if not GROQ_API_KEY:
         raise RuntimeError("GROQ_API_KEY が設定されていません")
@@ -392,7 +414,7 @@ def call_groq_batch(batch):
         "Content-Type": "application/json",
     }
     payload = {
-        "model": AI_MODEL,
+        "model": _pick_model(),
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -400,6 +422,7 @@ def call_groq_batch(batch):
         "temperature": 0.3,
         "response_format": {"type": "json_object"},
     }
+    payload.update(_model_opts(payload["model"]))
 
     last_err = None
     for attempt in range(AI_MAX_RETRIES + 1):
@@ -427,6 +450,14 @@ def call_groq_batch(batch):
                 if raw_wait > GROQ_RETRY_GIVE_UP_THRESHOLD_SEC:
                     print(f"  [WARN] Groqレート制限(429) -> Retry-After={raw_wait:.0f}秒は長すぎるため、"
                           f"再試行を諦めてこのバッチをスキップします(クォータ切れの可能性)")
+                    _EXHAUSTED_MODELS.add(payload["model"])
+                    remaining = [m for m in AI_MODELS if m not in _EXHAUSTED_MODELS]
+                    if remaining:
+                        payload.pop("reasoning_effort", None)
+                        payload["model"] = remaining[0]
+                        payload.update(_model_opts(remaining[0]))
+                        print(f"  [INFO] モデルを {remaining[0]} に切り替えて再試行します")
+                        continue
                     break
                 wait = min(max(raw_wait, 1.0), 60.0)
                 if attempt < AI_MAX_RETRIES:
