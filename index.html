@@ -792,8 +792,10 @@
             lastUpdatedEl.innerHTML = `<div>${escapeHtml(label)}</div>`;
             lastUpdatedEl.style.display = 'block';
 
-            // 3時間以上更新が無ければ、パイプラインが止まっている可能性を警告する
-            const STALE_THRESHOLD_MINUTES = 180;
+            // 12時間以上更新が無ければ、パイプラインが止まっている可能性を警告する
+            // (GitHub Actionsの定期実行は混雑で実際には約6時間おきになることが多く、
+            //  3時間だと常時警告が出てしまうため緩めている)
+            const STALE_THRESHOLD_MINUTES = 720;
             if (diffMinutes > STALE_THRESHOLD_MINUTES) {
                 showStatus('⚠ 更新が長時間止まっている可能性があります(自動更新パイプラインを確認してください)', true);
             }
