@@ -455,6 +455,31 @@ ITEM_MAX_AGE_HOURS = 120
 VALID_GENRES = ["爆笑", "ほっこり", "動物", "コミカル", "驚き"]
 EXCLUDED_GENRE = "除外"
 
+# おすすめ度(1-5)がこの値未満の記事はピンにしない(「かろうじて該当」の1点を落とす)。
+MIN_PIN_SCORE = 2
+
+# AIが国名を英語や略称で返すことがあるため、日本語の国名に揃えるための表(小文字で引く)。
+# 国の絞り込みチップが「日本」と「Japan」に割れるのを防ぐ。
+COUNTRY_ALIASES = {
+    "japan": "日本", "usa": "アメリカ", "us": "アメリカ", "united states": "アメリカ", "united states of america": "アメリカ",
+    "america": "アメリカ", "uk": "イギリス", "united kingdom": "イギリス", "england": "イギリス", "scotland": "イギリス",
+    "china": "中国", "south korea": "韓国", "korea": "韓国", "taiwan": "台湾", "india": "インド", "indonesia": "インドネシア",
+    "thailand": "タイ", "vietnam": "ベトナム", "viet nam": "ベトナム", "philippines": "フィリピン", "malaysia": "マレーシア",
+    "singapore": "シンガポール", "pakistan": "パキスタン", "bangladesh": "バングラデシュ", "sri lanka": "スリランカ",
+    "nepal": "ネパール", "turkey": "トルコ", "türkiye": "トルコ", "turkiye": "トルコ", "israel": "イスラエル", "saudi arabia": "サウジアラビア",
+    "uae": "アラブ首長国連邦", "united arab emirates": "アラブ首長国連邦", "iran": "イラン", "iraq": "イラク", "jordan": "ヨルダン",
+    "egypt": "エジプト", "morocco": "モロッコ", "algeria": "アルジェリア", "tunisia": "チュニジア", "south africa": "南アフリカ",
+    "kenya": "ケニア", "nigeria": "ナイジェリア", "ghana": "ガーナ", "tanzania": "タンザニア", "uganda": "ウガンダ",
+    "zambia": "ザンビア", "zimbabwe": "ジンバブエ", "ethiopia": "エチオピア", "senegal": "セネガル",
+    "france": "フランス", "germany": "ドイツ", "italy": "イタリア", "spain": "スペイン", "netherlands": "オランダ",
+    "sweden": "スウェーデン", "switzerland": "スイス", "portugal": "ポルトガル", "greece": "ギリシャ", "ireland": "アイルランド",
+    "russia": "ロシア", "poland": "ポーランド", "ukraine": "ウクライナ", "romania": "ルーマニア", "canada": "カナダ",
+    "mexico": "メキシコ", "brazil": "ブラジル", "argentina": "アルゼンチン", "colombia": "コロンビア", "peru": "ペルー",
+    "bolivia": "ボリビア", "ecuador": "エクアドル", "chile": "チリ", "cuba": "キューバ", "australia": "オーストラリア",
+    "new zealand": "ニュージーランド", "norway": "ノルウェー", "denmark": "デンマーク", "finland": "フィンランド",
+    "belgium": "ベルギー", "austria": "オーストリア", "czech republic": "チェコ", "hungary": "ハンガリー",
+}
+
 # ジャンルごとのピンの色(フロントのTailwindカラーに合わせてある)。
 GENRE_COLORS = {
     "爆笑": "#f59e0b",      # amber-500

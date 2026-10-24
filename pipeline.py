@@ -40,6 +40,7 @@ from config import (
     ARTICLES_PER_AI_BATCH,
     DUPLICATE_COORD_JITTER_DEGREES,
     DUPLICATE_TITLE_SIMILARITY_THRESHOLD,
+    COUNTRY_ALIASES,
     ENABLE_LOCAL_CITY_FEEDS,
     ENABLE_TOP_FEEDS,
     EXCLUDED_GENRE,
@@ -58,6 +59,7 @@ from config import (
     LOCAL_CITIES,
     MAX_NEW_ARTICLES_PER_RUN,
     MAX_PINS_TOTAL,
+    MIN_PIN_SCORE,
     NEWS_COUNTRIES,
     NEWS_MAX_ITEMS_PER_COUNTRY,
     NEWS_MAX_ITEMS_PER_LOCAL_CITY,
@@ -449,7 +451,9 @@ def _build_prompt(batch):
         f"   次のようなものは必ず {EXCLUDED_GENRE} にすること: 戦争・テロ・政治・選挙・外交・"
         "経済/市況・事故/災害/犯罪で人が傷ついたり亡くなったりした話・病気・訴訟・"
         "通常のスポーツ結果・通常のテック/製品ニュース・広告/セール情報。"
-        "被害者を笑いものにする内容、差別的な内容も除外。迷ったら除外。\n"
+        "被害者を笑いものにする内容、差別的な内容も除外。"
+        "また、ただの日常・観光・季節の風景・芸能人のゴシップや近況・インタビュー・"
+        "謝罪や批判への返答なども、笑えない/ほっこりしない/意外でないなら除外。迷ったら除外。\n"
         f"2. region: 次のいずれか一つ -> {region_list}\n"
         "2b. country: その出来事の国名を日本語で(例: 日本、アメリカ、イギリス、ブラジル)。"
         "場所が特定できないときは空文字。\n"
@@ -633,6 +637,7 @@ def _process_ai_batch(batch, batch_num, total_batches):
         title_ja = (r.get("title_ja") or "").strip()
         summary = (r.get("summary_ja") or "").strip()
         country = (r.get("country") or "").strip()
+        country = COUNTRY_ALIASES.get(country.casefold(), country)  # "Japan" → "日本" など日本語に統一
         try:
             score = max(1, min(5, int(r.get("score"))))
         except (TypeError, ValueError):
@@ -641,6 +646,9 @@ def _process_ai_batch(batch, batch_num, total_batches):
         # --- AIの返りを検証(真面目なニュース=除外や不正なジャンルは落とし、不正な地域は除外) ---
         if genre not in VALID_GENRES:
             excluded_serious += 1  # 真面目なニュース(除外判定)、または想定外のジャンル値
+            continue
+        if score < MIN_PIN_SCORE:
+            excluded_serious += 1  # 面白さが足りない(おすすめ度が低い)記事も載せない
             continue
         if region not in REGION_QUOTAS:
             continue  # 地域を集計できない記事はノルマ選抜の対象外にする
@@ -1210,6 +1218,7 @@ def merge_with_previous(new_items, previous_items, previous_generated_at, now_dt
         it.setdefault("isSponsored", False)
         it.setdefault("region", "")
         it.setdefault("country", "")
+        it["country"] = COUNTRY_ALIASES.get(str(it["country"]).casefold(), it["country"])  # 公開済みの英語表記も直す
         it.setdefault("score", 3)
         it["firstSeenAt"] = eff_ts.isoformat().replace("+00:00", "Z")
         kept_previous.append(it)
