@@ -12,12 +12,12 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>せかにゅ - ニュースと地理</title>
-    <meta name="description" content="世界のニュースをAIが見出し翻訳し、地図上にリアルタイムで可視化する「せかにゅ」。">
+    <title>せかにゅ - 笑える・ほっこり世界のニュース</title>
+    <meta name="description" content="爆笑・ほっこり・動物・ちょっと意外。世界のゆるいニュースをAIが日本語にして、地図で見つけられる「せかにゅ」。">
 
     <!-- OGP / Twitter Card -->
-    <meta property="og:title" content="せかにゅ | ニュースと地理">
-    <meta property="og:description" content="世界のニュースをAIが見出し翻訳し、地図上にピンで可視化するサービス。">
+    <meta property="og:title" content="せかにゅ | 笑える・ほっこり世界のニュース">
+    <meta property="og:description" content="爆笑・ほっこり・動物・ちょっと意外。世界のゆるいニュースを地図で見つけるサービス。">
     <meta property="og:type" content="website">
     <meta property="og:image" content="https://sekanews.com/ogp-image.png">
     <meta property="og:url" content="https://sekanews.com/">
@@ -87,9 +87,65 @@
             50% { filter: drop-shadow(0 0 7px rgba(220,38,38,0.95)); }
         }
 
+        /* おすすめニュースの流れる帯(地図の最上部)。地図を見ている間も
+           「今おすすめの記事」が横に流れ続け、クリックでその場所へ飛んで記事を開く。 */
+        #ticker {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: 36px;
+            z-index: 1100;
+            display: none;
+            align-items: center;
+            background: rgba(17, 24, 39, 0.92);
+            color: #fff;
+            font-size: 12px;
+        }
+        #ticker.ticker-on { display: flex; }
+        .ticker-label {
+            flex-shrink: 0;
+            height: 100%;
+            padding: 0 12px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-weight: 800;
+            background: #ec4899;
+        }
+        .ticker-viewport { flex: 1; min-width: 0; height: 100%; overflow: hidden; }
+        #ticker-track {
+            display: inline-flex;
+            align-items: center;
+            height: 100%;
+            white-space: nowrap;
+            animation: ticker-scroll var(--ticker-duration, 150s) linear infinite;
+        }
+        #ticker:hover #ticker-track,
+        #ticker:focus-within #ticker-track { animation-play-state: paused; }
+        @keyframes ticker-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+        .ticker-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            height: 100%;
+            padding: 0 18px;
+            color: inherit;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font: inherit;
+            font-weight: 600;
+        }
+        .ticker-item:hover, .ticker-item:focus-visible { background: rgba(255, 255, 255, 0.12); outline: none; }
+        .ticker-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .ticker-place { color: #9ca3af; font-weight: 400; }
+        @media (prefers-reduced-motion: reduce) {
+            #ticker-track { animation: none; }
+            .ticker-viewport { overflow-x: auto; }
+        }
+
         .overlay-ui {
             position: absolute;
-            top: 20px;
+            top: 48px;
             left: 50%;
             transform: translateX(-50%);
             z-index: 1000;
@@ -236,7 +292,7 @@
 
         .pin-toast {
             position: fixed;
-            top: 92px;
+            top: 120px;
             left: 50%;
             transform: translateX(-50%);
             background: #111827;
@@ -304,14 +360,23 @@
         }
         .dark #portal-panel { background: #0f172a; }
         #portal-panel.portal-hidden { display: none; }
-        #portal-tabs {
+        #portal-tabs, #portal-regions, #portal-countries {
             display: flex;
             gap: 8px;
             overflow-x: auto;
             padding: 4px 2px 10px;
             -webkit-overflow-scrolling: touch;
         }
-        #portal-tabs::-webkit-scrollbar { display: none; }
+        #portal-tabs::-webkit-scrollbar,
+        #portal-regions::-webkit-scrollbar,
+        #portal-countries::-webkit-scrollbar { display: none; }
+        .portal-row-label {
+            flex-shrink: 0;
+            align-self: center;
+            font-size: 11px;
+            font-weight: 800;
+            color: #9ca3af;
+        }
         .portal-tab {
             flex-shrink: 0;
             font-size: 12px;
@@ -376,6 +441,12 @@
     </style>
 </head>
 <body class="bg-gray-100 dark:bg-gray-900 overflow-hidden relative">
+    <!-- おすすめニュースの流れる帯(データ読み込み後にJSで中身を作る) -->
+    <div id="ticker" role="region" aria-label="おすすめニュース">
+        <div class="ticker-label"><i class="ph-fill ph-sparkle" aria-hidden="true"></i> おすすめ</div>
+        <div class="ticker-viewport"><div id="ticker-track"></div></div>
+    </div>
+
     <!-- ヘッダーUI -->
     <div class="overlay-ui w-[92%] max-w-2xl">
         <div id="header-card" class="bg-white/90 dark:bg-gray-800/90 backdrop-blur-md rounded-2xl shadow-lg p-4 flex flex-col gap-3 border border-gray-200 dark:border-gray-700">
@@ -386,7 +457,7 @@
                     </div>
                     <div class="flex-1 min-w-0">
                         <h1 id="site-title" class="text-lg font-bold leading-tight text-gray-900 dark:text-gray-100">せかにゅ</h1>
-                        <p id="site-subtitle" class="text-xs text-gray-500 dark:text-gray-400">ニュースと地理</p>
+                        <p id="site-subtitle" class="text-xs text-gray-500 dark:text-gray-400">笑える・ほっこり・意外な世界のニュース</p>
                         <p id="today-date" class="text-[11px] text-gray-400 dark:text-gray-500"></p>
                     </div>
                     <button id="theme-toggle" type="button" onclick="toggleTheme()"
@@ -432,7 +503,7 @@
             <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
                 <div>
                     <h2 class="text-xl font-extrabold text-gray-900 dark:text-gray-100">せかにゅ 総合</h2>
-                    <p class="text-xs text-gray-500 dark:text-gray-400">日本のニュースじゃ報じられない、世界のブルーオーシャンニュース</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">笑える・ほっこり・動物・ちょっと意外。世界のゆるいニュースだけ集めました</p>
                 </div>
                 <div class="flex items-center gap-2">
                     <button id="portal-theme-toggle" type="button" onclick="toggleTheme()"
@@ -463,6 +534,8 @@
                 <div id="portal-map-preview-label"><i class="ph ph-map-trifold text-base" aria-hidden="true"></i> 地図でさがす</div>
             </div>
             <div id="portal-tabs"></div>
+            <div id="portal-regions"></div>
+            <div id="portal-countries"></div>
             <div id="portal-featured" class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6"></div>
             <div id="portal-list" class="space-y-3"></div>
             <div class="flex items-center justify-center gap-3 text-[10px] text-gray-400 dark:text-gray-500 mt-8 pb-2 flex-wrap">
@@ -536,62 +609,77 @@
             {
                 id: 1,
                 location: { lat: 43.0618, lng: 141.3545, name: "札幌" },
-                category: "エンタメ",
-                title: "大通公園で新感覚の没入型イルミネーションが開幕",
-                originalTitle: "大通公園で新感覚の没入型イルミネーションが開幕",
+                country: "日本",
+                region: "日本",
+                category: "ほっこり",
+                score: 5,
+                title: "雪の朝、近所の子どもたちが道の雪かきを手伝ってくれた",
+                originalTitle: "雪の朝、近所の子どもたちが道の雪かきを手伝ってくれた",
                 publishedAt: null,
                 sourceName: "",
-                url: "https://example.com/sapporo-news",
+                url: "https://example.com/sample-1",
                 color: "#ec4899",
-                imageUrl: "https://picsum.photos/seed/1/800/600"
+                imageUrl: null
             },
             {
                 id: 2,
-                location: { lat: 24.7136, lng: 46.6753, name: "リヤド" },
-                category: "経済",
-                title: "サウジ、巨大スマートシティ「NEOM」に10兆円規模の追加投資",
-                originalTitle: "サウジ、巨大スマートシティ「NEOM」に10兆円規模の追加投資",
+                location: { lat: 28.5383, lng: -81.3792, name: "オーランド" },
+                country: "アメリカ",
+                region: "北米",
+                category: "爆笑",
+                score: 4,
+                title: "フロリダ男、ワニを「散歩」させようとして近所が大騒ぎに",
+                originalTitle: "フロリダ男、ワニを「散歩」させようとして近所が大騒ぎに",
                 publishedAt: null,
                 sourceName: "",
-                url: "https://example.com/saudi-news",
-                color: "#10b981",
-                imageUrl: "https://picsum.photos/seed/2/800/600"
+                url: "https://example.com/sample-2",
+                color: "#f59e0b",
+                imageUrl: null
             },
             {
                 id: 3,
                 location: { lat: -1.2921, lng: 36.8219, name: "ナイロビ" },
-                category: "テック",
-                title: "ナイロビ発のフィンテック企業が大型資金調達を実施",
-                originalTitle: "ナイロビ発のフィンテック企業が大型資金調達を実施",
+                country: "ケニア",
+                region: "アフリカ南部・東部",
+                category: "動物",
+                score: 4,
+                title: "町に迷い込んだキリンが、商店街でお客さんのように歩いていた",
+                originalTitle: "町に迷い込んだキリンが、商店街でお客さんのように歩いていた",
                 publishedAt: null,
                 sourceName: "",
-                url: "https://example.com/kenya-news",
-                color: "#3b82f6",
-                imageUrl: "https://picsum.photos/seed/3/800/600"
+                url: "https://example.com/sample-3",
+                color: "#10b981",
+                imageUrl: null
             },
             {
                 id: 4,
-                location: { lat: 37.7749, lng: -122.4194, name: "サンフランシスコ" },
-                category: "テック",
-                title: "次世代AIモデルが発表、複雑な推論タスクで人間超え",
-                originalTitle: "次世代AIモデルが発表、複雑な推論タスクで人間超え",
+                location: { lat: 51.5074, lng: -0.1278, name: "ロンドン" },
+                country: "イギリス",
+                region: "西欧",
+                category: "コミカル",
+                score: 3,
+                title: "郵便局に「配達員より先に猫が届いた」荷物が話題に",
+                originalTitle: "郵便局に「配達員より先に猫が届いた」荷物が話題に",
                 publishedAt: null,
                 sourceName: "",
-                url: "https://example.com/sf-news",
-                color: "#3b82f6",
-                imageUrl: "https://picsum.photos/seed/4/800/600"
+                url: "https://example.com/sample-4",
+                color: "#8b5cf6",
+                imageUrl: null
             },
             {
                 id: 5,
                 location: { lat: -33.9249, lng: 18.4241, name: "ケープタウン" },
-                category: "環境",
-                title: "ケープタウン沖で新たな海洋エネルギー発電の試験開始",
-                originalTitle: "ケープタウン沖で新たな海洋エネルギー発電の試験開始",
+                country: "南アフリカ",
+                region: "アフリカ南部・東部",
+                category: "驚き",
+                score: 5,
+                title: "ペンギンが水族館の入口で毎朝「開館待ち」をしていると判明",
+                originalTitle: "ペンギンが水族館の入口で毎朝「開館待ち」をしていると判明",
                 publishedAt: null,
                 sourceName: "",
-                url: "https://example.com/sa-news",
-                color: "#10b981",
-                imageUrl: "https://picsum.photos/seed/5/800/600"
+                url: "https://example.com/sample-5",
+                color: "#3b82f6",
+                imageUrl: null
             }
         ];
 
@@ -685,7 +773,8 @@
         })();
 
         // 地図の初期化(データ取得前に先に表示できる)
-        const map = L.map('map', { zoomControl: false }).setView([20.0, 60.0], 3);
+        // preferCanvas: ピンを1個ずつDOM要素にせず、1枚のcanvasに描く(千件超でも軽い)
+        const map = L.map('map', { zoomControl: false, preferCanvas: true }).setView([20.0, 60.0], 3);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
 
         L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -867,8 +956,12 @@
             }
         };
 
-        function openSidebar(news, side = 'left') {
+        function openSidebar(news, side = 'left', fromList = false) {
             lastFocusedElement = document.activeElement;
+            // 一覧から開いたときだけ「一覧にもどる」を出す(一覧→記事→一覧、と行き来できる)
+            const backBtnHtml = (fromList && lastListState)
+                ? `<button type="button" onclick="reopenLastList()" class="mb-4 inline-flex items-center gap-1.5 text-xs font-bold text-gray-600 dark:text-gray-300 hover:underline"><i class="ph ph-arrow-left" aria-hidden="true"></i> 一覧にもどる</button>`
+                : '';
 
             sidebarPanel.classList.remove('left-side', 'right-side');
             sidebarPanel.classList.add(`${side}-side`);
@@ -927,9 +1020,10 @@
 
             sidebarContent.innerHTML = `
                 <div>
+                    ${backBtnHtml}
                     <div class="flex items-center gap-2 mb-3 flex-wrap">
                         <span class="px-2.5 py-1 rounded-full text-xs font-bold text-white" style="background-color: ${escapeHtml(news.color)}">
-                            ${escapeHtml(news.category)}
+                            ${moodEmoji(news.category)}${escapeHtml(news.category)}
                         </span>
                         <span class="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1">
                             <i class="ph-fill ph-map-pin" aria-hidden="true"></i> ${escapeHtml(news.location.name)}
@@ -1000,20 +1094,39 @@
             }
         };
 
-        function openAreaNewsList() {
+        // ------------------------------------------------------------------
+        // ニュース一覧パネル(サイドバー)。「表示中エリア」ボタンと、地図上のクラスタ
+        // (丸い数字)のクリックの両方がここを使う。クラスタを押すと拡大せず、そこにある
+        // ニュースの一覧がすぐ開き、カードを押せば記事詳細へ進める(2クリックで読める)。
+        // ------------------------------------------------------------------
+        const LIST_PANEL_MAX_ITEMS = 80; // 一覧に出す最大件数(DOMを増やしすぎない)
+        let lastListState = null;        // 記事詳細から「一覧にもどる」ための記憶
+        let lastClusterBounds = null;    // 「この範囲を拡大」用
+
+        // おすすめ度(score)の高い順 → 新しい順
+        function newsRank(a, b) {
+            return ((b.score || 3) - (a.score || 3)) || (portalNewsScore(b) - portalNewsScore(a));
+        }
+
+        function openNewsListPanel(title, items, side, extraHtml) {
             lastFocusedElement = document.activeElement;
-            const bounds = map.getBounds();
-            const visibleNews = newsData.filter(news => matchesFilter(news) && bounds.contains([news.location.lat, news.location.lng]));
+            lastListState = { title, items, side, extraHtml: extraHtml || '' };
 
             sidebarPanel.classList.remove('left-side', 'right-side');
-            sidebarPanel.classList.add('right-side');
+            sidebarPanel.classList.add(`${side}-side`);
 
-            if (visibleNews.length === 0) {
+            if (items.length === 0) {
                 sidebarContent.innerHTML = `<div class="text-center text-gray-500 dark:text-gray-400 mt-10">このエリアにはニュースがありません</div>`;
             } else {
                 const spikyPlaces = computeSpikyPlaces();
-                let listHtml = `<h2 class="text-xl font-extrabold mb-6 flex items-center gap-2 text-gray-900 dark:text-gray-100"><i class="ph ph-map-pin" aria-hidden="true"></i> 表示中エリアのニュース(${visibleNews.length}件)</h2><div class="space-y-4">`;
-                visibleNews.forEach(news => {
+                const sorted = items.slice().sort(newsRank);
+                const shown = sorted.slice(0, LIST_PANEL_MAX_ITEMS);
+                let listHtml = `<h2 class="text-xl font-extrabold mb-4 flex items-center gap-2 text-gray-900 dark:text-gray-100"><i class="ph ph-map-pin" aria-hidden="true"></i> ${escapeHtml(title)}(${items.length}件)</h2>${extraHtml || ''}`;
+                if (items.length > shown.length) {
+                    listHtml += `<p class="text-xs text-gray-500 dark:text-gray-400 mb-3">おすすめ順に${shown.length}件を表示しています。地図を拡大すると絞り込めます。</p>`;
+                }
+                listHtml += `<div class="space-y-4">`;
+                shown.forEach(news => {
                     const relTime = formatRelativeTime(news.publishedAt);
                     const timeBadge = relTime ? `<span class="text-[11px] text-gray-400 dark:text-gray-500">・${escapeHtml(relTime)}</span>` : '';
                     const isSponsored = !!news.isSponsored;
@@ -1026,7 +1139,7 @@
                              onclick="openSidebarFromList(${news.id})"
                              onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSidebarFromList(${news.id});}">
                             <div class="flex items-center gap-2 mb-2">
-                                <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${escapeHtml(news.color)}"></span>
+                                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold text-white" style="background-color: ${escapeHtml(news.color)}">${moodEmoji(news.category)}${escapeHtml(news.category)}</span>
                                 <span class="text-xs font-bold text-gray-500 dark:text-gray-400">${escapeHtml(news.location.name)}</span>
                                 ${timeBadge}
                                 ${tag}
@@ -1042,9 +1155,50 @@
             setTimeout(() => sidebarPanel.classList.add('sidebar-visible'), 10);
         }
 
+        function openAreaNewsList() {
+            const bounds = map.getBounds();
+            const visibleNews = newsData.filter(news => matchesFilter(news) && bounds.contains([news.location.lat, news.location.lng]));
+            openNewsListPanel('表示中エリアのニュース', visibleNews, 'right');
+        }
+
+        // 地図上のクラスタ(丸い数字)をクリックしたとき: そこに含まれるニュースの一覧を開く。
+        // クラスタが画面の左半分にあれば一覧は右側に出して、クラスタ自体は隠さない。
+        function openClusterList(cluster, latlng) {
+            const ids = new Set(cluster.getAllChildMarkers().map(m => m.options.newsId));
+            const items = newsData.filter(n => ids.has(n.id));
+            const point = map.latLngToContainerPoint(latlng);
+            const side = (point.x < window.innerWidth / 2) ? 'right' : 'left';
+            lastClusterBounds = cluster.getBounds();
+            const zoomBtn = `<button type="button" onclick="zoomToLastCluster()" class="mb-4 inline-flex items-center gap-1.5 text-xs font-bold bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 px-3 py-1.5 rounded-full transition-colors"><i class="ph ph-magnifying-glass-plus" aria-hidden="true"></i> この範囲を拡大</button>`;
+            openNewsListPanel('このエリアのニュース', items, side, zoomBtn);
+        }
+
+        window.zoomToLastCluster = function () {
+            if (!lastClusterBounds) return;
+            closeSidebar();
+            map.fitBounds(lastClusterBounds.pad(0.2), { maxZoom: 12 });
+        };
+
+        // 一覧のカードから記事詳細へ(詳細には「一覧にもどる」ボタンが付く)
         window.openSidebarFromList = function (id) {
             const news = newsData.find(n => n.id === id);
-            if (news) openSidebar(news, 'right');
+            if (news) openSidebar(news, lastListState ? lastListState.side : 'right', !!lastListState);
+        };
+
+        window.reopenLastList = function () {
+            if (!lastListState) return;
+            const s = lastListState;
+            openNewsListPanel(s.title, s.items, s.side, s.extraHtml);
+        };
+
+        // おすすめの帯や総合画面から: 記事の場所へ飛んで詳細を開く
+        window.goToNews = function (id) {
+            const news = newsData.find(n => n.id === id);
+            if (!news || !news.location) return;
+            closePortal();
+            lastListState = null;
+            map.flyTo([news.location.lat, news.location.lng], Math.max(map.getZoom(), 7), { duration: 0.8 });
+            openSidebar(news, 'right');
         };
 
         function closeSidebar() {
@@ -1075,86 +1229,119 @@
         map.on('moveend', updateVisibleNewsCount);
 
 
+        // 気分(ジャンル)ごとの絵文字
+        const MOOD_EMOJI = { '爆笑': '😂', 'ほっこり': '🥰', '動物': '🐾', 'コミカル': '🤪', '驚き': '😲' };
+        function moodEmoji(category) {
+            return MOOD_EMOJI[category] ? MOOD_EMOJI[category] + ' ' : '';
+        }
+
         // newsData を元に地図上へピンを立てる(クラスタリング対応。データ読み込み完了後に呼ばれる)
+        // 2026-10-24: 軽量化のため、ピンを「1個ずつHTML要素」から「canvasに描く丸」(circleMarker)
+        // に変更した(preferCanvas)。以前、重なったピンをずらして散らしたら千件超のDOM要素で
+        // 重くなったが、canvas描画なら数千件でも軽い。また、クラスタ(丸い数字)をクリックしたら
+        // 拡大ではなく一覧パネルを開く(openClusterList)。同じ座標に何件重なっていても
+        // 一覧から全部読めるので、従来のspiderfy(弾けて広がる操作)は不要になった。
         function renderMap() {
             if (clusterGroup) {
                 map.removeLayer(clusterGroup);
             }
-            // 2026-07-08: クラスタリング(近いピンを丸めて件数だけ表示する方式)を全廃したところ
-            // ピン数が多いエリアで描画が重くなったため復活させた。
-            // 2026-07-09: 同じ座標(同じ場所)のピンが複数あると、最大ズームまで拡大しても
-            // クラスタが解けず、地図上からそれらのニュースにアクセスできなくなる不具合が
-            // あったため、spiderfyOnMaxZoomを再びtrueに戻した(最大ズームでクリックすると
-            // 個別ピンが弾けて広がり、それぞれタップできるようになる)。
-            clusterGroup = L.markerClusterGroup({ maxClusterRadius: 55, spiderfyOnMaxZoom: true });
+            clusterGroup = L.markerClusterGroup({
+                maxClusterRadius: 55,
+                showCoverageOnHover: false,
+                zoomToBoundsOnClick: false, // クリックは「拡大」ではなく「一覧を開く」に使う
+                chunkedLoading: true,
+                animate: false
+            });
+            clusterGroup.on('clusterclick', (e) => openClusterList(e.layer, e.latlng));
 
             const spikyPlaces = computeSpikyPlaces();
+            const markers = [];
 
             newsData.forEach(news => {
                 if (!matchesFilter(news)) return;
 
                 const isSponsored = !!news.isSponsored;
                 const isSpiky = !isSponsored && spikyPlaces.has(news.location.name);
-                const ringClass = isSpiky ? 'spike-ring' : '';
-                const sponsoredBorder = isSponsored ? 'border:2px solid #eab308;' : '';
-                const badgeHtml = isSponsored
-                    ? `<span style="position:absolute;top:-6px;right:-6px;background:#111827;color:#fbbf24;font-size:8px;font-weight:800;padding:1px 4px;border-radius:6px;line-height:1.4;">PR</span>`
-                    : (isSpiky ? `<span style="position:absolute;top:-6px;right:-6px;font-size:11px;line-height:1;">🔥</span>` : '');
 
-                const customIcon = L.divIcon({
-                    className: `custom-marker ${ringClass}`,
-                    html: `<div style="position:relative; background-color: ${escapeHtml(news.color)}; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); ${sponsoredBorder}">
-                             <i class="ph-bold ${isSponsored ? 'ph-storefront' : 'ph-newspaper'} text-white text-[10px]" aria-hidden="true"></i>
-                             ${badgeHtml}
-                           </div>`,
-                    iconSize: [30, 30],
-                    iconAnchor: [15, 15]
+                const marker = L.circleMarker([news.location.lat, news.location.lng], {
+                    radius: isSponsored ? 11 : 9,
+                    fillColor: news.color,
+                    fillOpacity: 0.95,
+                    color: isSpiky ? '#dc2626' : (isSponsored ? '#eab308' : '#ffffff'),
+                    weight: (isSpiky || isSponsored) ? 3 : 2,
+                    bubblingMouseEvents: false, // ピンのクリックで地図のclickが走ってサイドバーが閉じるのを防ぐ
+                    newsId: news.id
                 });
-
-                const marker = L.marker([news.location.lat, news.location.lng], { icon: customIcon });
 
                 marker.on('click', function (e) {
-                    L.DomEvent.stopPropagation(e);
                     const containerPoint = map.latLngToContainerPoint(e.latlng);
                     const side = (containerPoint.x < window.innerWidth / 2) ? 'left' : 'right';
+                    lastListState = null;
                     openSidebar(news, side);
-                });
-
-                marker.on('add', function () {
-                    const el = marker.getElement();
-                    if (!el) return;
-                    el.setAttribute('tabindex', '0');
-                    el.setAttribute('role', 'button');
-                    el.setAttribute('aria-label', `${news.category}: ${news.title}(${news.location.name})`);
-                    el.addEventListener('keydown', (e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            marker.fire('click', { latlng: marker.getLatLng() });
-                        }
-                    });
                 });
 
                 marker.bindTooltip(`
                     <div class="flex items-center gap-1.5 mb-1">
                         <span class="w-2 h-2 rounded-full" style="background-color: ${escapeHtml(news.color)}"></span>
-                        <span class="text-[10px] text-gray-500">${escapeHtml(news.category)}</span>
+                        <span class="text-[10px] text-gray-500">${moodEmoji(news.category)}${escapeHtml(news.category)}</span>
                         ${isSponsored ? '<span class="text-[9px] font-bold text-amber-600">PR</span>' : ''}
                         ${isSpiky ? '<span class="text-[9px] font-bold text-red-600">🔥急上昇</span>' : ''}
                     </div>
                     <div class="text-xs">${escapeHtml(news.title)}</div>
                  `, {
                     direction: 'top',
-                    offset: [0, -15],
+                    offset: [0, -10],
                     className: 'rich-tooltip'
                 });
 
-                clusterGroup.addLayer(marker);
+                markers.push(marker);
             });
 
+            clusterGroup.addLayers(markers);
             map.addLayer(clusterGroup);
 
             buildLegend();
             updateVisibleNewsCount();
+        }
+
+        // ------------------------------------------------------------------
+        // おすすめニュースの帯(地図の最上部に横へ流れ続ける)
+        // おすすめ度(score)が高く、新しめの記事を最大24件、毎回少し並びを変えて流す。
+        // 項目をクリックすると、その場所へ飛んで記事詳細を開く。マウスを載せると止まる。
+        // ------------------------------------------------------------------
+        function buildTicker() {
+            const tickerEl = document.getElementById('ticker');
+            const track = document.getElementById('ticker-track');
+            if (!tickerEl || !track) return;
+
+            const now = Date.now();
+            const pool = newsData.filter(n => !n.isSponsored && n.location);
+            const fresh = pool.filter(n => {
+                const t = portalNewsScore(n);
+                return t === -Infinity || (now - t) < 72 * 3600 * 1000;
+            });
+            const base = fresh.length >= 8 ? fresh : pool;
+            const picked = base
+                .map(n => ({ n, k: (n.score || 3) + Math.random() * 1.5 }))
+                .sort((a, b) => b.k - a.k)
+                .slice(0, 24)
+                .map(x => x.n);
+
+            if (picked.length === 0) {
+                tickerEl.classList.remove('ticker-on');
+                return;
+            }
+
+            const itemsHtml = picked.map(n => `
+                <button type="button" class="ticker-item" onclick="goToNews(${n.id})">
+                    <span class="ticker-dot" style="background:${escapeHtml(n.color)}"></span>
+                    <span>${moodEmoji(n.category)}${escapeHtml(n.title)}</span>
+                    <span class="ticker-place">${escapeHtml(n.location.name)}</span>
+                </button>`).join('');
+            // 同じ内容を2回並べて、-50%まで動かすと継ぎ目なく繰り返す
+            track.innerHTML = itemsHtml + itemsHtml;
+            track.style.setProperty('--ticker-duration', (picked.length * 8) + 's');
+            tickerEl.classList.add('ticker-on');
         }
 
         // ------------------------------------------------------------------
@@ -1264,8 +1451,44 @@
             return isNaN(d) ? -Infinity : d;
         }
 
+        // 総合画面の「国・地域」絞り込み(地域チップ → 選ぶとその地域の国チップが出る)
+        const PORTAL_REGION_ORDER = ['日本', '東アジア', '東南アジア', '南アジア', '中東', 'アフリカ北部', 'アフリカ南部・東部', '西欧', '東欧・ロシア', '北米', '中南米', 'オセアニア'];
+        let portalActiveRegion = null;
+        let portalActiveCountry = null;
+
+        window.setPortalRegion = function (region) {
+            portalActiveRegion = (portalActiveRegion === region) ? null : region;
+            portalActiveCountry = null;
+            portalListLimit = 60;
+            renderPortal();
+        };
+        window.setPortalCountry = function (country) {
+            portalActiveCountry = (portalActiveCountry === country) ? null : country;
+            portalListLimit = 60;
+            renderPortal();
+        };
+        window.openSidebarFromPortal = function (id) {
+            const news = newsData.find(n => n.id === id);
+            if (!news) return;
+            lastListState = null;
+            openSidebar(news, 'right');
+        };
+
+        // [名前, 件数] の配列から、絞り込みチップの行(先頭に行ラベル)を作る
+        function portalChipRow(label, entries, activeKey, handlerName) {
+            if (entries.length === 0) return '';
+            const chips = entries.map(([key, count]) => {
+                const isActive = activeKey === key;
+                const keyAttr = escapeHtml(key).replace(/"/g, '&quot;');
+                return `<button type="button" class="portal-tab ${isActive ? 'portal-tab-active' : ''}" onclick="${handlerName}(&quot;${keyAttr}&quot;)">${escapeHtml(key)} <span class="opacity-60">${count}</span></button>`;
+            }).join('');
+            return `<span class="portal-row-label">${label}</span>${chips}`;
+        }
+
         function renderPortal() {
             const tabsEl = document.getElementById('portal-tabs');
+            const regionsEl = document.getElementById('portal-regions');
+            const countriesEl = document.getElementById('portal-countries');
             const featuredEl = document.getElementById('portal-featured');
             const listEl = document.getElementById('portal-list');
             if (!tabsEl || !featuredEl || !listEl) return;
@@ -1284,18 +1507,50 @@
                 .concat(categories.map(cat => {
                     const isActive = portalActiveCategory === cat;
                     const catAttr = escapeHtml(cat).replace(/"/g, '&quot;');
-                    return `<button type="button" class="portal-tab ${isActive ? 'portal-tab-active' : ''}" onclick="setPortalCategory(&quot;${catAttr}&quot;)">${escapeHtml(cat)}</button>`;
+                    return `<button type="button" class="portal-tab ${isActive ? 'portal-tab-active' : ''}" onclick="setPortalCategory(&quot;${catAttr}&quot;)">${moodEmoji(cat)}${escapeHtml(cat)}</button>`;
                 })).join('');
 
-            const pool = newsData.filter(n => {
+            // ジャンル・ブックマーク・検索で絞った「ベース」(地域・国の件数はこれを数える)
+            const base = newsData.filter(n => {
                 if (!n.location) return false;
                 if (portalActiveCategory !== null && n.category !== portalActiveCategory) return false;
                 if (portalShowBookmarkedOnly && !isBookmarked(n.id)) return false;
                 if (searchQuery) {
                     const q = searchQuery.toLowerCase();
-                    const haystack = `${n.title || ''} ${n.originalTitle || ''} ${n.location.name || ''}`.toLowerCase();
+                    const haystack = `${n.title || ''} ${n.originalTitle || ''} ${n.location.name || ''} ${n.country || ''}`.toLowerCase();
                     if (!haystack.includes(q)) return false;
                 }
+                return true;
+            });
+
+            // 地域チップ(固定の並び順。0件の地域は出さない)
+            const regionCounts = new Map();
+            base.forEach(n => { if (n.region) regionCounts.set(n.region, (regionCounts.get(n.region) || 0) + 1); });
+            const regionEntries = PORTAL_REGION_ORDER.filter(r => regionCounts.has(r)).map(r => [r, regionCounts.get(r)]);
+            if (portalActiveRegion && !regionCounts.has(portalActiveRegion)) {
+                portalActiveRegion = null;
+                portalActiveCountry = null;
+            }
+            if (regionsEl) regionsEl.innerHTML = portalChipRow('地域', regionEntries, portalActiveRegion, 'setPortalRegion');
+
+            // 国チップ(地域を選んだときだけ。その地域の国を件数の多い順に)
+            if (countriesEl) {
+                if (portalActiveRegion) {
+                    const countryCounts = new Map();
+                    base.forEach(n => {
+                        if (n.region === portalActiveRegion && n.country) countryCounts.set(n.country, (countryCounts.get(n.country) || 0) + 1);
+                    });
+                    const countryEntries = Array.from(countryCounts.entries()).sort((a, b) => b[1] - a[1]);
+                    if (portalActiveCountry && !countryCounts.has(portalActiveCountry)) portalActiveCountry = null;
+                    countriesEl.innerHTML = portalChipRow('国', countryEntries, portalActiveCountry, 'setPortalCountry');
+                } else {
+                    countriesEl.innerHTML = '';
+                }
+            }
+
+            const pool = base.filter(n => {
+                if (portalActiveRegion && n.region !== portalActiveRegion) return false;
+                if (portalActiveCountry && n.country !== portalActiveCountry) return false;
                 return true;
             });
             const sorted = pool.slice().sort((a, b) => portalNewsScore(b) - portalNewsScore(a));
@@ -1308,7 +1563,8 @@
 
             const spikyPlaces = computeSpikyPlaces();
             const nonSponsored = sorted.filter(n => !n.isSponsored);
-            const featured = nonSponsored.slice(0, 3);
+            // 注目の3件は、おすすめ度の高いものを優先して選ぶ
+            const featured = nonSponsored.slice().sort(newsRank).slice(0, 3);
             const featuredIds = new Set(featured.map(n => n.id));
             const rest = sorted.filter(n => !featuredIds.has(n.id));
 
@@ -1319,14 +1575,15 @@
                 const imgHtml = safeImg
                     ? `<div class="h-32 rounded-lg overflow-hidden mb-2 bg-gray-200 dark:bg-gray-700"><img src="${escapeHtml(safeImg)}" alt="" class="w-full h-full object-cover" loading="lazy" onerror="this.parentElement.style.display='none';"></div>`
                     : '';
+                const placeLabel = [news.country, news.location.name].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' ・ ');
                 return `
                     <div class="portal-featured-card bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl p-4 shadow-sm"
-                         role="button" tabindex="0" onclick="openSidebarFromList(${news.id})"
-                         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSidebarFromList(${news.id});}">
+                         role="button" tabindex="0" onclick="openSidebarFromPortal(${news.id})"
+                         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSidebarFromPortal(${news.id});}">
                         ${imgHtml}
                         <div class="flex items-center gap-1.5 mb-2 flex-wrap">
-                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold text-white" style="background-color: ${escapeHtml(news.color)}">${escapeHtml(news.category)}</span>
-                            <span class="text-[11px] text-gray-400 dark:text-gray-500">${escapeHtml(news.location.name)}${relTime ? '・' + escapeHtml(relTime) : ''}</span>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold text-white" style="background-color: ${escapeHtml(news.color)}">${moodEmoji(news.category)}${escapeHtml(news.category)}</span>
+                            <span class="text-[11px] text-gray-400 dark:text-gray-500">${escapeHtml(placeLabel)}${relTime ? '・' + escapeHtml(relTime) : ''}</span>
                             ${isSpiky ? '<span class="text-[10px] font-bold text-red-600 dark:text-red-400">🔥急上昇</span>' : ''}
                         </div>
                         <h3 class="font-extrabold text-sm leading-snug text-gray-900 dark:text-gray-100 mb-1">${escapeHtml(news.title)}</h3>
@@ -1334,7 +1591,7 @@
                 `;
             }).join('');
 
-                        const visibleRest = rest.slice(0, portalListLimit);
+            const visibleRest = rest.slice(0, portalListLimit);
             listEl.innerHTML = visibleRest.map(news => {
                 const relTime = formatRelativeTime(news.publishedAt);
                 const isSponsored = !!news.isSponsored;
@@ -1346,19 +1603,20 @@
                 const thumbHtml = safeImg
                     ? `<div class="w-16 h-16 rounded-lg overflow-hidden shrink-0 bg-gray-200 dark:bg-gray-700"><img src="${escapeHtml(safeImg)}" alt="" class="w-full h-full object-cover" loading="lazy" onerror="this.parentElement.style.display='none';"></div>`
                     : '';
+                const placeLabel = [news.country, news.location.name].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' ・ ');
                 return `
                     <div class="portal-list-item bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl p-4 shadow-sm flex gap-3 items-start"
-                         role="button" tabindex="0" onclick="openSidebarFromList(${news.id})"
-                         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSidebarFromList(${news.id});}">
+                         role="button" tabindex="0" onclick="openSidebarFromPortal(${news.id})"
+                         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSidebarFromPortal(${news.id});}">
                         ${thumbHtml}
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2 mb-1.5 flex-wrap">
                                 <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${escapeHtml(news.color)}"></span>
-                                <span class="text-xs font-bold text-gray-500 dark:text-gray-400">${escapeHtml(news.location.name)}</span>
+                                <span class="text-xs font-bold text-gray-500 dark:text-gray-400">${escapeHtml(placeLabel)}</span>
                                 ${relTime ? `<span class="text-[11px] text-gray-400 dark:text-gray-500">・${escapeHtml(relTime)}</span>` : ''}
                                 ${tag}
                             </div>
-                            <h3 class="font-bold text-sm leading-tight text-gray-900 dark:text-gray-100">${escapeHtml(news.title)}</h3>
+                            <h3 class="font-bold text-sm leading-tight text-gray-900 dark:text-gray-100">${moodEmoji(news.category)}${escapeHtml(news.title)}</h3>
                         </div>
                     </div>
                 `;
@@ -1393,7 +1651,8 @@
             const match = location.hash.match(/^#news=(.+)$/);
             if (!match) return;
             const id = decodeURIComponent(match[1]);
-            const news = newsData.find(n => n.id === id);
+            // URLのハッシュは文字列、news.idは数値なので、文字列に揃えて比較する
+            const news = newsData.find(n => String(n.id) === id);
             if (!news || !news.location) return;
             closePortal();
             map.setView([news.location.lat, news.location.lng], Math.max(map.getZoom(), 6));
@@ -1431,6 +1690,7 @@
 
             renderMap();
             renderPortal();
+            buildTicker();
             ensurePortalPreviewMap();
             openNewsFromUrlHash();
             todayDateEl.textContent = formatTodayDate();
