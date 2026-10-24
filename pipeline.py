@@ -40,6 +40,13 @@ from config import (
     ARTICLES_PER_AI_BATCH,
     DUPLICATE_COORD_JITTER_DEGREES,
     DUPLICATE_TITLE_SIMILARITY_THRESHOLD,
+    ENABLE_LOCAL_CITY_FEEDS,
+    ENABLE_TOP_FEEDS,
+    EXCLUDED_GENRE,
+    FUNNY_RSS_FEEDS,
+    FUNNY_RSS_MAX_ITEMS_PER_FEED,
+    FUNNY_SEARCH_FEEDS,
+    FUNNY_SEARCH_WHEN,
     GENRE_COLORS,
     GEOCODE_CACHE_FILE,
     GROQ_API_KEY,
@@ -65,6 +72,7 @@ from config import (
     NOMINATIM_USER_AGENT,
     OUTPUT_FILE,
     PLACEHOLDER_IMAGE_BASE,
+    PRIORITY_SOURCE_MAX,
     REAL_IMAGE_FETCH_MAX_BYTES,
     REAL_IMAGE_FETCH_MAX_WORKERS,
     REAL_IMAGE_FETCH_TIMEOUT_SEC,
@@ -198,64 +206,137 @@ def fetch_local_city_articles(label, query, gl, hl, ceid):
     return []
 
 
+def _add_new_articles(all_articles, seen_urls, articles, source_type, priority=False):
+    """URL重複を除いて all_articles に追加し、追加できた件数を返す。
+    priority=True は「当たり率の高い取得元」(Reddit・面白系RSS)の印で、AI判定枠が
+    足りないときに優先して残される(main()の件数制限を参照)。"""
+    added = 0
+    for a in articles:
+        url = a.get("url")
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            a["_source_type"] = source_type
+            a["_priority"] = priority
+            all_articles.append(a)
+            added += 1
+    return added
+
+
 def collect_all_articles():
     all_articles = []
     seen_urls = set()
 
-    for country in NEWS_COUNTRIES:
-        label = country["label"]
-        print(f"  [FETCH] {label} (gl={country['gl']} hl={country['hl']})")
-        articles = fetch_country_articles(label, country["gl"], country["hl"], country["ceid"])
+    # --- 旧来の取得元(既定では無効。config.pyのENABLE_*で復活できる) ---
+    if ENABLE_TOP_FEEDS:
+        for country in NEWS_COUNTRIES:
+            label = country["label"]
+            print(f"  [FETCH] {label} (gl={country['gl']} hl={country['hl']})")
+            articles = fetch_country_articles(label, country["gl"], country["hl"], country["ceid"])
+            added = _add_new_articles(all_articles, seen_urls, articles, "top")
+            print(f"          -> {added}件追加(重複除く)")
+            time.sleep(NEWS_REQUEST_DELAY_SEC)
 
-        added = 0
-        for a in articles:
-            url = a.get("url")
-            if url and url not in seen_urls:
-                seen_urls.add(url)
-                a["_source_type"] = "top"  # 国別トップニュース由来
-                all_articles.append(a)
-                added += 1
-        print(f"          -> {added}件追加(重複除く)")
+    if ENABLE_LOCAL_CITY_FEEDS:
+        for city in LOCAL_CITIES:
+            label = city["label"]
+            print(f"  [FETCH-LOCAL] {label} (地名検索: {city['query']})")
+            articles = fetch_local_city_articles(label, city["query"], city["gl"], city["hl"], city["ceid"])
+            added = _add_new_articles(all_articles, seen_urls, articles, "local")
+            print(f"          -> {added}件追加(重複除く)")
+            time.sleep(NEWS_REQUEST_DELAY_SEC)
 
-        time.sleep(NEWS_REQUEST_DELAY_SEC)
+    # --- 面白い話題専門のRSS(失敗しても他の取得元には影響しない) ---
+    rss_total = 0
+    for label, url in FUNNY_RSS_FEEDS:
+        added = _add_new_articles(all_articles, seen_urls, fetch_funny_rss_articles(label, url), "funny_rss", priority=True)
+        print(f"  [FUNNY-RSS] {label}: {added}件追加")
+        rss_total += added
+        time.sleep(1)
+    print(f"  [FETCH] 面白系RSS候補: {rss_total}件")
 
-    print(f"  [FETCH] 国別トップニュース候補: {len(all_articles)}件")
-
-    # ローカルニュース(地名検索フィード): 首都・国全体ではなく特定都市の
-    # ローカルメディアの記事も拾えるようにする(例: 札幌のSTVなど)。
-    for city in LOCAL_CITIES:
-        label = city["label"]
-        print(f"  [FETCH-LOCAL] {label} (地名検索: {city['query']})")
-        articles = fetch_local_city_articles(label, city["query"], city["gl"], city["hl"], city["ceid"])
-
-        added = 0
-        for a in articles:
-            url = a.get("url")
-            if url and url not in seen_urls:
-                seen_urls.add(url)
-                a["_source_type"] = "local"  # 都市名検索(ローカル)由来
-                all_articles.append(a)
-                added += 1
-        print(f"          -> {added}件追加(重複除く)")
-
-        time.sleep(NEWS_REQUEST_DELAY_SEC)
-
-    # Reddit(面白い話題系)。失敗しても他の取得結果には影響しない。
+    # --- Reddit(面白い話題系)。失敗しても他の取得結果には影響しない ---
     try:
-        reddit_added = 0
-        for a in fetch_reddit_articles():
-            u = a.get("url")
-            if u and u not in seen_urls:
-                seen_urls.add(u)
-                a["_source_type"] = "top"
-                all_articles.append(a)
-                reddit_added += 1
+        reddit_added = _add_new_articles(all_articles, seen_urls, fetch_reddit_articles(), "reddit", priority=True)
         print(f"  [FETCH] Reddit候補: {reddit_added}件")
     except Exception as e:
         print(f"  [WARN] Reddit取得で予期せぬエラー(スキップ): {e}")
 
-    print(f"  [FETCH] 合計候補(トップ+ローカル): {len(all_articles)}件")
+    # --- Google Newsキーワード検索(「ほっこり」「珍事件」など現地語で国ごとに検索) ---
+    search_total = 0
+    for label, gl, hl, ceid, queries in FUNNY_SEARCH_FEEDS:
+        for q in queries:
+            articles = fetch_local_city_articles(label, f"{q} {FUNNY_SEARCH_WHEN}", gl, hl, ceid)
+            search_total += _add_new_articles(all_articles, seen_urls, articles, "funny_search")
+            time.sleep(NEWS_REQUEST_DELAY_SEC)
+        print(f"  [FUNNY-SEARCH] {label}: {len(queries)}キーワード検索済み(累計{search_total}件)")
+    print(f"  [FETCH] キーワード検索候補: {search_total}件")
+
+    print(f"  [FETCH] 合計候補: {len(all_articles)}件")
     return all_articles
+
+
+# ---------------------------------------------------------------------------
+# ①-a 面白い話題専門のRSS(RSS 2.0 / RSS 1.0(RDF) / Atom のどれでも読める簡易パーサー)
+# ---------------------------------------------------------------------------
+def _local_name(tag):
+    return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
+
+
+def _child_text(el, *names):
+    for child in el:
+        if _local_name(child.tag) in names and (child.text or "").strip():
+            return child.text.strip()
+    return ""
+
+
+def _parse_funny_feed(xml_bytes, label, max_items):
+    """RSS 2.0(channel/item)・RSS 1.0 RDF(直下のitem)・Atom(entry)をまとめて読む。"""
+    root = ET.fromstring(xml_bytes)
+    articles = []
+    for el in root.iter():
+        if _local_name(el.tag) not in ("item", "entry"):
+            continue
+        title = re.sub(r"\s+", " ", _child_text(el, "title")).strip()
+        link = _child_text(el, "link")
+        if not link:  # Atomは <link href="..."/>
+            for child in el:
+                if _local_name(child.tag) == "link" and child.get("href"):
+                    link = child.get("href").strip()
+                    break
+        if not title or not link:
+            continue
+        raw_date = _child_text(el, "pubDate", "date", "published", "updated")
+        published = _parse_pubdate(raw_date)
+        if not published and raw_date:  # RDFのdc:dateやAtomはISO8601
+            try:
+                published = (datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+                             .astimezone(timezone.utc).isoformat().replace("+00:00", "Z"))
+            except Exception:
+                published = None
+        articles.append({
+            "title": title,
+            "url": link,
+            "domain": urlparse(link).netloc.replace("www.", "") or label,
+            "socialimage": None,
+            "published_at": published,
+            "_region_hint": "",
+            "_country_label": label,
+        })
+        if len(articles) >= max_items:
+            break
+    return articles
+
+
+def fetch_funny_rss_articles(label, url):
+    try:
+        resp = requests.get(url, timeout=NEWS_REQUEST_TIMEOUT_SEC * 2, headers=NEWS_REQUEST_HEADERS)
+        if resp.status_code != 200:
+            print(f"  [WARN] 面白系RSS取得失敗 {label}: HTTP {resp.status_code}")
+            return []
+        return _parse_funny_feed(resp.content, label, FUNNY_RSS_MAX_ITEMS_PER_FEED)
+    except Exception as e:
+        print(f"  [WARN] 面白系RSS取得失敗 {label}: {type(e).__name__}: {e}")
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -264,13 +345,21 @@ def collect_all_articles():
 # 日本の大手メディアでは報じられにくい「へえ」「おもしろ」系の話題を増やす狙い。
 # 公式RSS(キー不要)を使う。GitHub Actions等のIPはRedditに弾かれる(403/429)ことが
 # あるため、失敗しても他の取得は止めず、ログに結果を残してスキップする。
+# 2026-10-24: 方針転換(爆笑・ほっこり・動物・意外)に合わせて硬派な worldnews を外し、
+# 動物・ほっこり・フロリダマン系を追加した。
 REDDIT_SUBREDDITS = [
-    "nottheonion",
-    "todayilearned",
     "UpliftingNews",
+    "nottheonion",
     "offbeat",
+    "FloridaMan",
+    "AnimalsBeingBros",
+    "AnimalsBeingDerps",
+    "aww",
+    "MadeMeSmile",
+    "HumansBeingBros",
+    "todayilearned",
     "interestingasfuck",
-    "worldnews",
+    "mildlyinteresting",
 ]
 REDDIT_MAX_ITEMS_PER_SUB = 25
 REDDIT_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; sekanews-bot/1.0; +https://sekanews.com)"}
@@ -330,7 +419,7 @@ def fetch_reddit_articles():
             results.extend(items)
         except Exception as e:
             print(f"  [WARN] Reddit取得失敗 r/{sub}: {type(e).__name__}: {e}")
-        time.sleep(8)
+        time.sleep(6)
     return results
 
 
@@ -348,11 +437,24 @@ def _build_prompt(batch):
     region_list = "、".join(REGION_QUOTAS.keys())
 
     system_prompt = (
-        "あなたはニュース記事を分析するアシスタントです。"
+        "あなたは「笑える・ほっこりする・ちょっと意外」なニュースだけを集める"
+        "サイトの編集アシスタントです。"
         "与えられるのは記事の見出し(タイトル)だけで、本文は渡されません。"
         "各記事について、以下を判定してください。\n"
-        f"1. genre: 次のいずれか一つ -> {genre_list}\n"
+        f"1. genre: 次のいずれか一つ -> {genre_list}、または {EXCLUDED_GENRE}\n"
+        "   爆笑=思わず笑ってしまう珍事件・ドタバタ(誰も深刻な被害を受けていないもの)、"
+        "ほっこり=心が温まる・親切・感動、動物=動物が主役のかわいい/面白い話、"
+        "コミカル=ユーモラス・シュールな出来事、"
+        "驚き=意外性のある事実・「へえ」と思う話題(真面目な話題でも意外性が主役ならこれ)。\n"
+        f"   次のようなものは必ず {EXCLUDED_GENRE} にすること: 戦争・テロ・政治・選挙・外交・"
+        "経済/市況・事故/災害/犯罪で人が傷ついたり亡くなったりした話・病気・訴訟・"
+        "通常のスポーツ結果・通常のテック/製品ニュース・広告/セール情報。"
+        "被害者を笑いものにする内容、差別的な内容も除外。迷ったら除外。\n"
         f"2. region: 次のいずれか一つ -> {region_list}\n"
+        "2b. country: その出来事の国名を日本語で(例: 日本、アメリカ、イギリス、ブラジル)。"
+        "場所が特定できないときは空文字。\n"
+        "2c. score: おすすめ度を1〜5の整数で(5=誰かに教えたくなるほど面白い/ほっこり、"
+        "3=普通、1=かろうじて該当)。\n"
         "3. place: 見出しの内容が実際に起きた/関係する場所として、地図でジオコーディング"
         "できる具体的な地名(できれば都市名。見出しに区・駅・施設名など都市より細かい"
         "地名があればそちらを優先すること)。その国全体の選挙・政策・災害など国名レベルの"
@@ -378,6 +480,7 @@ def _build_prompt(batch):
         "summary_jaは日本語で書くこと。\n"
         "\n"
         '出力は必ず {"results": [ {"index": 0, "genre": "...", "region": "...", '
+        '"country": "...", "score": 3, '
         '"place": "...", "title_ja": "...", "summary_ja": "..."}, ... ] } '
         "という形のJSONオブジェクトのみ。説明文やコードブロック記号は一切付けないこと。"
     )
@@ -497,7 +600,8 @@ def _is_sensitive_title(title):
 def _process_ai_batch(batch, batch_num, total_batches):
     """1バッチ分のGroq呼び出し+結果検証をまとめて行う。並列実行(ThreadPoolExecutor)
     から呼ばれる前提で、副作用(print以外)を持たない純粋な処理として切り出してある。
-    戻り値: (このバッチで採用できた記事のリスト, センシティブ判定で弾いた件数)"""
+    戻り値: (このバッチで採用できた記事のリスト, センシティブ判定で弾いた件数,
+             真面目なニュースとして除外した件数)"""
     print(f"  [AI] バッチ {batch_num}/{total_batches} ({len(batch)}件)")
 
     try:
@@ -505,10 +609,11 @@ def _process_ai_batch(batch, batch_num, total_batches):
     except Exception as e:
         print(f"  [SKIP] バッチ{batch_num}を諦めて次へ: {e}")
         print(f"         詳細: {traceback.format_exc(limit=2)}")
-        return [], 0
+        return [], 0, 0
 
     batch_enriched = []
     blocked = 0
+    excluded_serious = 0
 
     for r in results:
         if not isinstance(r, dict):
@@ -527,10 +632,16 @@ def _process_ai_batch(batch, batch_num, total_batches):
         place = (r.get("place") or "").strip()
         title_ja = (r.get("title_ja") or "").strip()
         summary = (r.get("summary_ja") or "").strip()
+        country = (r.get("country") or "").strip()
+        try:
+            score = max(1, min(5, int(r.get("score"))))
+        except (TypeError, ValueError):
+            score = 3
 
-        # --- AIの返りを検証(不正なジャンル/地域は矯正 or 除外) ---
+        # --- AIの返りを検証(真面目なニュース=除外や不正なジャンルは落とし、不正な地域は除外) ---
         if genre not in VALID_GENRES:
-            genre = "その他"
+            excluded_serious += 1  # 真面目なニュース(除外判定)、または想定外のジャンル値
+            continue
         if region not in REGION_QUOTAS:
             continue  # 地域を集計できない記事はノルマ選抜の対象外にする
 
@@ -542,12 +653,14 @@ def _process_ai_batch(batch, batch_num, total_batches):
             **article,
             "ai_genre": genre,
             "ai_region": region,
+            "ai_country": country,
+            "ai_score": score,
             "ai_place": place,
             "ai_title_ja": title_ja or article.get("title", ""),
             "ai_summary": summary,
         })
 
-    return batch_enriched, blocked
+    return batch_enriched, blocked, excluded_serious
 
 
 def enrich_articles_with_ai(articles):
@@ -565,6 +678,7 @@ def enrich_articles_with_ai(articles):
     # 起きてもcall_groq_batch側の指数バックオフ再試行で自然に吸収される設計。
     enriched = []
     blocked_sensitive = 0
+    excluded_total = 0
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=GROQ_MAX_WORKERS) as executor:
         future_to_num = {
@@ -574,15 +688,17 @@ def enrich_articles_with_ai(articles):
         for future in concurrent.futures.as_completed(future_to_num):
             batch_num = future_to_num[future]
             try:
-                batch_enriched, batch_blocked = future.result()
+                batch_enriched, batch_blocked, batch_excluded = future.result()
             except Exception as e:
                 print(f"  [SKIP] バッチ{batch_num}で予期しない例外: {e}")
                 continue
             enriched.extend(batch_enriched)
             blocked_sensitive += batch_blocked
+            excluded_total += batch_excluded
 
     if blocked_sensitive:
         print(f"  [FILTER] センシティブな見出しのためピン化を見送り: {blocked_sensitive}件")
+    print(f"  [FILTER] 真面目なニュースとして除外: {excluded_total}件")
     print(f"  [AI] 判定OK: {len(enriched)}件")
     return enriched
 
@@ -654,18 +770,15 @@ def select_by_region_quota(enriched):
     selected = []
     for region, quota in REGION_QUOTAS.items():
         candidates = by_region.get(region, [])
-        # 2026-07-07: ノルマ枠を「ローカル(都市検索由来)」と「トップ(国別トップニュース由来)」に
-        # LOCAL_SELECT_RATIOの比率で配分して選抜する。これにより、トランプの言動・ホルムズ海峡・
-        # 経済危機のような硬派な大ニュース(トップ)の枠を必ず確保しつつ、知らない街の開店・
-        # 地元の話題のようなローカルニュースを厚めに採れる。どちらかの候補が足りない地域では
-        # 余った枠をもう一方で埋めるので、枠は無駄にならない。
-        local_cands = [a for a in candidates if a.get("_source_type") == "local"]
-        top_cands = [a for a in candidates if a.get("_source_type") != "local"]
-        picked = _split_by_ratio(local_cands, top_cands, quota, LOCAL_SELECT_RATIO)
+        # 2026-10-24: 面白さ重視の方針に変更。AIが付けたおすすめ度(ai_score)が高い順に
+        # ノルマ分だけ採る。同点内は毎回シャッフルして特定の取得元に偏らないようにする。
+        candidates = candidates[:]
+        random.shuffle(candidates)
+        candidates.sort(key=lambda a: -a.get("ai_score", 3))
+        picked = candidates[:quota]
         selected.extend(picked)
-        n_local = sum(1 for a in picked if a.get("_source_type") == "local")
-        n_top = len(picked) - n_local
-        print(f"  [SELECT] {region}: {len(picked)}/{quota}件 (ローカル{n_local}/トップ{n_top})")
+        avg = sum(a.get("ai_score", 3) for a in picked) / len(picked) if picked else 0
+        print(f"  [SELECT] {region}: {len(picked)}/{quota}件 (平均おすすめ度{avg:.1f})")
 
     selected = dedup_similar_titles(selected)
     print(f"  [SELECT] 今回の新規選抜: {len(selected)}件")
@@ -950,7 +1063,7 @@ def build_new_items(selected, cache):
         lat, lng = jitter_duplicate_coords(coords["lat"], coords["lng"], occurrence)
 
         genre = a["ai_genre"]
-        color = GENRE_COLORS.get(genre, GENRE_COLORS["その他"])
+        color = GENRE_COLORS.get(genre, "#9ca3af")  # genreはVALID_GENRESに検証済みなので通常は必ずヒットする
 
         url = a.get("url", "")
         # まずRSS自体に画像があればそれを使う(通常は無い)。無ければ上で並列取得しておいた
@@ -969,6 +1082,9 @@ def build_new_items(selected, cache):
         items.append({
             "location": {"lat": lat, "lng": lng, "name": place},
             "category": genre,
+            "region": a.get("ai_region", ""),
+            "country": a.get("ai_country", ""),
+            "score": a.get("ai_score", 3),
             "title": display_title,
             "originalTitle": original_title,
             "sourceName": a.get("domain", ""),
@@ -1071,10 +1187,16 @@ def merge_with_previous(new_items, previous_items, previous_generated_at, now_dt
 
     kept_previous = []
     expired = 0
+    purged_old_genre = 0
     for it in previous_items:
         url = it.get("url")
         if url and url in new_urls:
             continue  # 同じ記事は今回取得した新しい方を使う
+
+        # 2026-10-24の方針転換前に蓄積された旧ジャンル(政治・経済など)の記事は捨てる
+        if it.get("category") not in VALID_GENRES:
+            purged_old_genre += 1
+            continue
 
         eff_ts = _effective_timestamp(it, previous_generated_at)
         if now_dt - eff_ts > max_age:
@@ -1086,9 +1208,14 @@ def merge_with_previous(new_items, previous_items, previous_generated_at, now_dt
         it.setdefault("aiSummaryIsHeadlineOnly", True)
         it.setdefault("sourceName", "")
         it.setdefault("isSponsored", False)
+        it.setdefault("region", "")
+        it.setdefault("country", "")
+        it.setdefault("score", 3)
         it["firstSeenAt"] = eff_ts.isoformat().replace("+00:00", "Z")
         kept_previous.append(it)
 
+    if purged_old_genre:
+        print(f"  [MERGE] 方針転換前の旧ジャンルの記事を破棄: {purged_old_genre}件")
     print(f"  [MERGE] 前回までのピンのうち有効期限切れ({ITEM_MAX_AGE_HOURS}時間超)で除外: {expired}件")
     print(f"  [MERGE] 継続ピン: {len(kept_previous)}件 + 新規ピン: {len(new_items)}件")
 
@@ -1138,18 +1265,17 @@ def main():
         # 単純なシャッフル切り詰めだと、候補数で圧倒的に多いトップニュースばかりが残り、
         # 数の少ないローカル記事がAI判定に到達しにくい。LOCAL_SELECT_RATIOと同じ比率で
         # ローカルを優先的に残しつつトップの枠も確保して切り詰める(最終選抜と方針を揃える)。
-        # Reddit(面白い話題系)は数が少なく、ランダムな切り詰めだと埋もれてしまうので、
-        # 先に枠を確保してから残りをローカル/トップで切り詰める。
-        reddit_cands = [a for a in articles if str(a.get("_country_label", "")).startswith("r/")][:40]
-        reddit_urls = {a.get("url") for a in reddit_cands}
-        rest = [a for a in articles if a.get("url") not in reddit_urls]
-        local_cands = [a for a in rest if a.get("_source_type") == "local"]
-        top_cands = [a for a in rest if a.get("_source_type") != "local"]
-        articles = reddit_cands + _split_by_ratio(
-            local_cands, top_cands, max(MAX_NEW_ARTICLES_PER_RUN - len(reddit_cands), 0), LOCAL_SELECT_RATIO)
-        n_local = sum(1 for a in articles if a.get("_source_type") == "local")
+        # 2026-10-24: Reddit・面白系RSSのような「当たり率の高い取得元」(_priority)に
+        # PRIORITY_SOURCE_MAX件まで先に枠を確保し、残りをGoogle検索フィード由来の記事で埋める。
+        priority_cands = [a for a in articles if a.get("_priority")]
+        random.shuffle(priority_cands)
+        priority_cands = priority_cands[:PRIORITY_SOURCE_MAX]
+        priority_urls = {a.get("url") for a in priority_cands}
+        rest = [a for a in articles if a.get("url") not in priority_urls]
+        random.shuffle(rest)
+        articles = priority_cands + rest[:max(MAX_NEW_ARTICLES_PER_RUN - len(priority_cands), 0)]
         print(f"  [LIMIT] 新規候補{before_cap}件をGroq無料枠に合わせて{len(articles)}件に制限"
-              f"(ローカル{n_local}/トップ{len(articles) - n_local})")
+              f"(優先取得元{len(priority_cands)}件)")
 
     print("=== ③ AIジャンル・地名判定・タイトル和訳 (Groq) ===")
     if articles:

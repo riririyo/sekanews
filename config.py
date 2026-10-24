@@ -337,6 +337,65 @@ LOCAL_CITIES = [
 ]
 
 # ---------------------------------------------------------------------------
+# ②-c 「爆笑・ほっこり・動物・意外」ニュースの取得元 (2026-10-24 大改修)
+# ---------------------------------------------------------------------------
+# せかにゅは「笑える・ほっこり・ちょっと意外」な話題だけを載せるサイトに方針転換した。
+# 国別トップニュース(NEWS_COUNTRIES)と都市名検索(LOCAL_CITIES)は政治・事件・経済が
+# ほとんどで、面白い記事がAI判定まで届かないため、既定では取得しない(Trueで復活)。
+ENABLE_TOP_FEEDS = False
+ENABLE_LOCAL_CITY_FEEDS = False
+
+# Google News「キーワード検索」フィード。国(言語)ごとに「ほっこり」「珍事件」等の
+# 現地語キーワードで検索する。(ラベル, gl, hl, ceid, [検索語...])
+# 検索語に " when:3d" を足して直近3日の記事に絞る。
+FUNNY_SEARCH_WHEN = "when:3d"
+FUNNY_SEARCH_FEEDS = [
+    ("日本", "JP", "ja", "JP:ja", ["ほっこり", "爆笑 ニュース", "珍事件", "珍騒動", "動物 かわいい", "まさかの 驚き 話題", "ユニーク 面白い 話題"]),
+    ("アメリカ", "US", "en-US", "US:en", ["funny news", "heartwarming", "weird news", "Florida Man", "wholesome", "animal rescue viral", "bizarre"]),
+    ("イギリス", "GB", "en-GB", "GB:en", ["quirky", "heartwarming", "bizarre news"]),
+    ("オーストラリア", "AU", "en-AU", "AU:en", ["quirky news", "wholesome", "weird"]),
+    ("カナダ", "CA", "en-CA", "CA:en", ["funny news", "heartwarming"]),
+    ("インド", "IN", "en-IN", "IN:en", ["funny viral", "heartwarming", "bizarre"]),
+    ("フィリピン", "PH", "en-PH", "PH:en", ["viral funny", "heartwarming"]),
+    ("南アフリカ", "ZA", "en-ZA", "ZA:en", ["funny", "heartwarming"]),
+    ("ケニア", "KE", "en-KE", "KE:en", ["funny", "wholesome"]),
+    ("ナイジェリア", "NG", "en-NG", "NG:en", ["funny", "wholesome"]),
+    ("韓国", "KR", "ko", "KR:ko", ["훈훈", "황당 해프닝", "웃음 화제"]),
+    ("台湾", "TW", "zh-Hant", "TW:zh-Hant", ["暖心", "烏龍", "爆笑 趣聞"]),
+    ("中国", "CN", "zh-Hans", "CN:zh-Hans", ["暖心", "爆笑 趣闻", "奇葩"]),
+    ("フランス", "FR", "fr", "FR:fr", ["insolite", "histoire drôle"]),
+    ("ドイツ", "DE", "de", "DE:de", ["kurios", "skurril", "tierisch"]),
+    ("スペイン", "ES", "es", "ES:es", ["insólito", "curioso viral"]),
+    ("メキシコ", "MX", "es-419", "MX:es-419", ["insólito", "curioso viral"]),
+    ("ブラジル", "BR", "pt-BR", "BR:pt-419", ["inusitado", "curioso viral", "fofo animal"]),
+    ("イタリア", "IT", "it", "IT:it", ["insolito", "curiosità"]),
+    ("オランダ", "NL", "nl", "NL:nl", ["bizar nieuws"]),
+    ("インドネシア", "ID", "id", "ID:id", ["viral lucu", "unik"]),
+    ("タイ", "TH", "th", "TH:th", ["ข่าวฮา", "น่ารัก สัตว์"]),
+    ("ベトナム", "VN", "vi", "VN:vi", ["hài hước", "ấm lòng"]),
+    ("トルコ", "TR", "tr", "TR:tr", ["ilginç haber", "komik"]),
+    ("ロシア", "RU", "ru", "RU:ru", ["курьёз", "забавно"]),
+    ("ポーランド", "PL", "pl", "PL:pl", ["dziwne", "zabawne"]),
+    ("サウジアラビア", "SA", "ar", "SA:ar", ["طريف", "غريب"]),
+]
+
+# 面白い話題専門のRSS(キー不要)。(表示名, URL)。2026-10-24にHTTP 200で取得できることを確認済み。
+# 失敗しても他の取得元には影響しない(ログに結果が残る)。
+FUNNY_RSS_FEEDS = [
+    ("カラパイア", "http://karapaia.com/index.rdf"),
+    ("らばQ", "http://labaq.com/index.rdf"),
+    ("Good News Network", "https://www.goodnewsnetwork.org/feed/"),
+    ("Oddity Central", "https://www.odditycentral.com/feed"),
+    ("UPI Odd News", "https://rss.upi.com/news/odd_news.rss"),
+    ("Positive News", "https://www.positive.news/feed/"),
+]
+FUNNY_RSS_MAX_ITEMS_PER_FEED = 30
+
+# 1回のAI判定枠(MAX_NEW_ARTICLES_PER_RUN)のうち、Reddit・面白系RSSといった
+# 「当たり率の高い取得元」に優先して確保する最大件数。残りがGoogle検索フィード分。
+PRIORITY_SOURCE_MAX = 150
+
+# ---------------------------------------------------------------------------
 # ③ 地域バランス (合計およそ1600件のピンを狙う設定。2026-07-09に1000→1600へ拡大)
 # ---------------------------------------------------------------------------
 # 各地域から最低何件ピンを立てたいか(ノルマ)。数字を増減させると、その地域の
@@ -385,22 +444,24 @@ MAX_PINS_TOTAL = 1600
 # 1回の更新(1時間ごと)で取得できる新規記事は数百件程度のことが多いが、この蓄積の
 # 仕組みのおかげで、地図全体としては常にMAX_PINS_TOTALに近いピンが世界中に
 # 散らばっている状態を保てる(「毎回1000件フェッチし直す」必要はない)。
-ITEM_MAX_AGE_HOURS = 48
+# 2026-10-24: 面白い話題は鮮度が落ちにくく、取得元も減ったので48→120時間(5日)に延長。
+ITEM_MAX_AGE_HOURS = 120
 
 # AIに判定させるジャンルの許容リスト。ここに無い値が返ってきたら"その他"に矯正する。
-VALID_GENRES = ["テック", "経済", "エンタメ", "政治", "環境", "スポーツ", "科学", "事件・事故", "その他"]
+# 2026-10-24: 政治・経済などの硬派なジャンルをやめ、「笑える/ほっこり/動物/意外」だけにした。
+# AIは真面目なニュースに EXCLUDED_GENRE を返し、それはピン化しない(完全に除外)。
+# 前回までのデータにこのリスト外のジャンル(旧ジャンル)の記事が残っていても、
+# merge_with_previous で自動的に捨てられる。
+VALID_GENRES = ["爆笑", "ほっこり", "動物", "コミカル", "驚き"]
+EXCLUDED_GENRE = "除外"
 
 # ジャンルごとのピンの色(フロントのTailwindカラーに合わせてある)。
 GENRE_COLORS = {
-    "テック": "#3b82f6",      # blue-500
-    "経済": "#10b981",        # emerald-500
-    "エンタメ": "#ec4899",    # pink-500
-    "政治": "#ef4444",        # red-500
-    "環境": "#14b8a6",        # teal-500(「経済」のemerald-500と紛らわしかったため変更)
-    "スポーツ": "#f59e0b",    # amber-500
-    "科学": "#8b5cf6",        # violet-500
-    "事件・事故": "#64748b",  # slate-500
-    "その他": "#9ca3af",      # gray-400
+    "爆笑": "#f59e0b",      # amber-500
+    "ほっこり": "#ec4899",  # pink-500
+    "動物": "#10b981",      # emerald-500
+    "コミカル": "#8b5cf6",  # violet-500
+    "驚き": "#3b82f6",      # blue-500
 }
 
 # 似たタイトルの記事(同じ出来事を別ソースが報じたもの)を重複ピンとして弾くための
